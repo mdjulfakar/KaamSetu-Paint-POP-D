@@ -1,4 +1,3 @@
-
 name: Build Android APK
 
 on:
@@ -21,35 +20,45 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-
-      - name: Extract Android Project
+      - name: Extract and Force Java 17
         run: |
-          mkdir -p android-project
-          unzip -o KaamSetu-Android-Cloud-Build-Ready.zip -d android-project
-
-      - name: Locate Android Project and Build APK
-        run: |
-          SETTINGS_FILE=$(find android-project -type f \( -name settings.gradle -o -name settings.gradle.kts \) | head -n 1)
-          if [ -z "$SETTINGS_FILE" ]; then
-            echo "ERROR: Android Gradle project not found in ZIP"
-            find android-project -maxdepth 5 -type f | sort
+          mkdir -p extracted_zip
+          if [ -f "KaamSetu-Android-Cloud-Build-Ready.zip" ]; then
+            unzip -o KaamSetu-Android-Cloud-Build-Ready.zip -d extracted_zip
+          else
+            find . -name "KaamSetu-Android-Cloud-Build-Ready.zip" -exec unzip -o {} -d extracted_zip \;
+          fi
+          
+          PROJECT_ROOT=$(find extracted_zip -maxdepth 4 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -exec dirname {} \; | head -n 1)
+          if [ -z "$PROJECT_ROOT" ]; then
+            echo "ERROR: Could not locate Gradle project root."
             exit 1
           fi
-          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
-          echo "Building project in: $PROJECT_DIR"
-          cd "$PROJECT_DIR"
-          gradle --no-daemon assembleDebug
+          echo "PROJECT_ROOT=$PROJECT_ROOT" >> $GITHUB_ENV
+          
+          # Force Java 17 in gradle.properties
+          echo "org.gradle.java.home=$JAVA_HOME" >> "$PROJECT_ROOT/gradle.properties"
+          echo "org.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m" >> "$PROJECT_ROOT/gradle.properties"
 
-      - name: Upload Android APK
+      - name: Build Debug APK
+        run: |
+          cd "$PROJECT_ROOT"
+          chmod +x gradlew || true
+          if [ -f "./gradlew" ]; then
+            ./gradlew assembleDebug --no-daemon
+          else
+            gradle assembleDebug --no-daemon
+          fi
+
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: KaamSetu-app
-          path: android-project/**/build/outputs/apk/debug/app-debug.apk
+          path: |
+            **/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+
 
 
 
