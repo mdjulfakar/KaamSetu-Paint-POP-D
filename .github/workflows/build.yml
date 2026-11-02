@@ -1,14 +1,11 @@
 
-name: Build KaamSetu APK
+name: Build Android APK
 
 on:
   push:
     branches:
       - main
   workflow_dispatch:
-
-permissions:
-  contents: read
 
 jobs:
   build:
@@ -21,78 +18,42 @@ jobs:
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
+          distribution: 'temurin'
           java-version: '17'
-
-      - name: Set up Gradle 8.9
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
 
       - name: Extract Project
         run: |
           mkdir -p extracted_zip
-          unzip -o KaamSetu-Android-Cloud-Build-Ready.zip -d extracted_zip
+          if [ -f "KaamSetu-Android-Cloud-Build-Ready.zip" ]; then
+            unzip -o KaamSetu-Android-Cloud-Build-Ready.zip -d extracted_zip
+          else
+            find . -name "KaamSetu-Android-Cloud-Build-Ready.zip" -exec unzip -o {} -d extracted_zip \;
+          fi
 
-      - name: Find Project Root
+      - name: Build with Direct Android SDK
         run: |
-          PROJECT_ROOT=$(find extracted_zip -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -exec dirname {} \; | head -n 1)
-
+          PROJECT_ROOT=$(find . -maxdepth 4 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -exec dirname {} \; | head -n 1 | tr -d '\n')
           if [ -z "$PROJECT_ROOT" ]; then
-            echo "ERROR: Gradle project not found"
-            exit 1
+            PROJECT_ROOT="."
           fi
-
-          echo "PROJECT_ROOT=$PROJECT_ROOT" >> "$GITHUB_ENV"
           echo "Building in: $PROJECT_ROOT"
+          cd "$PROJECT_ROOT"
 
-      - name: Force Java and Kotlin Target 17
-        run: |
-          APP_GRADLE="$PROJECT_ROOT/app/build.gradle.kts"
+          if [ -n "$ANDROID_SDK_ROOT" ]; then
+            echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+          fi
+          echo "org.gradle.java.home=$JAVA_HOME" > gradle.properties
 
-          if [ ! -f "$APP_GRADLE" ]; then
-            APP_GRADLE="$PROJECT_ROOT/app/build.gradle"
+          chmod +x gradlew || true
+          if [ -f "gradlew" ]; then
+            ./gradlew assembleDebug --no-daemon
+          else
+            gradle assembleDebug --no-daemon
           fi
 
-          if [ ! -f "$APP_GRADLE" ]; then
-            echo "ERROR: App Gradle file not found"
-            exit 1
-          fi
 
-          cat >> "$APP_GRADLE" <<'EOF'
 
-          // KaamSetu JVM compatibility fix
-          tasks.withType<JavaCompile>().configureEach {
-              sourceCompatibility = "17"
-              targetCompatibility = "17"
-          }
 
-          tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-              kotlinOptions {
-                  jvmTarget = "17"
-              }
-          }
-          EOF
-
-      - name: Build Debug APK
-        run: |
-          gradle --no-daemon -p "$PROJECT_ROOT" clean :app:assembleDebug
-
-      - name: Verify APK
-        run: |
-          test -s "$PROJECT_ROOT/app/build/outputs/apk/debug/app-debug.apk"
-          echo "KaamSetu APK successfully created!"
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: KaamSetu-debug-apk
-          path: extracted_zip/**/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-          retention-days: 14
           
 
 
