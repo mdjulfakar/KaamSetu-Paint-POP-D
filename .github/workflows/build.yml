@@ -43,7 +43,7 @@ jobs:
           PROJECT_DIR=$(dirname "$SETTINGS_FILE")
           echo "Building project in: $PROJECT_DIR"
           cd "$PROJECT_DIR"
-      gradle --no-daemon assembleDebug -Dorg.gradle.java.home=$JAVA_HOME.
+  gradle --no-daemon assembleDebug -Dorg.gradle.java.home=$JAVA_HOME
 
 
 
