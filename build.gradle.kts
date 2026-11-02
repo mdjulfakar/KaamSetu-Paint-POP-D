@@ -43,7 +43,8 @@ compileOptions {
 
     buildFeatures { compose = true }
 }
- kotlinOptions { jvmTarget = "18" }
+  kotlinOptions { jvmTarget = "1.8"
+ 
 
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
