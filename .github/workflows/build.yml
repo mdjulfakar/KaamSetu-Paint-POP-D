@@ -23,8 +23,7 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
-
+          gradle-version: '8.9
       - name: Extract Android Project
         run: |
           mkdir -p android-project
@@ -33,24 +32,25 @@ jobs:
       - name: Locate Android Project and Build APK
         run: |
           SETTINGS_FILE=$(find android-project -type f \( -name settings.gradle -o -name settings.gradle.kts \) | head -n 1)
-
           if [ -z "$SETTINGS_FILE" ]; then
             echo "ERROR: Android Gradle project not found in ZIP"
             find android-project -maxdepth 5 -type f | sort
             exit 1
           fi
-
           PROJECT_DIR=$(dirname "$SETTINGS_FILE")
           echo "Building project in: $PROJECT_DIR"
           cd "$PROJECT_DIR"
-gradle --no-daemon assembleDebug 
-
+          gradle --no-daemon assembleDebug
 
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
           name: KaamSetu-app
-          path: android-project/**/app/build/outputs/apk/debug/app-debug.apk
+          path: android-project/**/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+
+
+     
 
 
