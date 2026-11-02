@@ -30,7 +30,7 @@ jobs:
             find . -name "KaamSetu-Android-Cloud-Build-Ready.zip" -exec unzip -o {} -d extracted_zip \;
           fi
 
-      - name: Build with System Gradle and Java 17
+      - name: Force Strict Java 17 Build
         run: |
           PROJECT_ROOT=$(find extracted_zip -maxdepth 4 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -exec dirname {} \; | head -n 1)
           if [ -z "$PROJECT_ROOT" ]; then
@@ -39,26 +39,22 @@ jobs:
           fi
           echo "Building in: $PROJECT_ROOT"
           cd "$PROJECT_ROOT"
-          
-          echo "Configuring properties..."
+
+          echo "Configuring properties for strict 17..."
           echo "org.gradle.java.home=$JAVA_HOME" > gradle.properties
           echo "android.useAndroidX=true" >> gradle.properties
           echo "android.enableJetifier=true" >> gradle.properties
+          echo "org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8" >> gradle.properties
 
           echo "Running Gradle build..."
           gradle assembleDebug --no-daemon \
             -Dorg.gradle.java.home=$JAVA_HOME \
             -Pandroid.compileOptions.sourceCompatibility=VERSION_17 \
             -Pandroid.compileOptions.targetCompatibility=VERSION_17 \
-            -Dkotlin.jvm.target=17
+            -Pkotlin.jvm.target=17
 
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: KaamSetu-app
-          path: |
-            **/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
+
+
 
 
 
