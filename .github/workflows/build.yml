@@ -30,7 +30,7 @@ jobs:
             find . -name "KaamSetu-Android-Cloud-Build-Ready.zip" -exec unzip -o {} -d extracted_zip \;
           fi
 
-      - name: Force Strict Java 17 Build
+      - name: Force Compatible Build
         run: |
           PROJECT_ROOT=$(find extracted_zip -maxdepth 4 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -exec dirname {} \; | head -n 1)
           if [ -z "$PROJECT_ROOT" ]; then
@@ -40,18 +40,14 @@ jobs:
           echo "Building in: $PROJECT_ROOT"
           cd "$PROJECT_ROOT"
 
-          echo "Configuring properties for strict 17..."
-          echo "org.gradle.java.home=$JAVA_HOME" > gradle.properties
-          echo "android.useAndroidX=true" >> gradle.properties
-          echo "android.enableJetifier=true" >> gradle.properties
-          echo "org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8" >> gradle.properties
-
-          echo "Running Gradle build..."
+          echo "Running Gradle build with compatibility flags..."
           gradle assembleDebug --no-daemon \
-            -Dorg.gradle.java.home=$JAVA_HOME \
-            -Pandroid.compileOptions.sourceCompatibility=VERSION_17 \
-            -Pandroid.compileOptions.targetCompatibility=VERSION_17 \
-            -Pkotlin.jvm.target=17
+            -Pandroid.suppressUnsupportedCompileSdk=34 \
+            -Dorg.gradle.java.home=$JAVA_HOME
+
+
+
+
 
 
 
