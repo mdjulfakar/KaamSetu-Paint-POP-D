@@ -30,7 +30,7 @@ jobs:
             find . -name "KaamSetu-Android-Cloud-Build-Ready.zip" -exec unzip -o {} -d extracted_zip \;
           fi
 
-      - name: Overwrite JVM Config and Build
+      - name: Build with System Gradle and Java 17
         run: |
           PROJECT_ROOT=$(find extracted_zip -maxdepth 4 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -exec dirname {} \; | head -n 1)
           if [ -z "$PROJECT_ROOT" ]; then
@@ -40,17 +40,17 @@ jobs:
           echo "Building in: $PROJECT_ROOT"
           cd "$PROJECT_ROOT"
           
-          echo "Writing strict Java 17 and AndroidX configuration..."
+          echo "Configuring properties..."
           echo "org.gradle.java.home=$JAVA_HOME" > gradle.properties
           echo "android.useAndroidX=true" >> gradle.properties
           echo "android.enableJetifier=true" >> gradle.properties
 
-          chmod +x gradlew || true
-          if [ -f "./gradlew" ]; then
-            ./gradlew assembleDebug --no-daemon
-          else
-            gradle assembleDebug --no-daemon
-          fi
+          echo "Running Gradle build..."
+          gradle assembleDebug --no-daemon \
+            -Dorg.gradle.java.home=$JAVA_HOME \
+            -Pandroid.compileOptions.sourceCompatibility=VERSION_17 \
+            -Pandroid.compileOptions.targetCompatibility=VERSION_17 \
+            -Dkotlin.jvm.target=17
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
