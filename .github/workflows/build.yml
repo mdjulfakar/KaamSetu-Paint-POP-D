@@ -20,22 +20,30 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
       - name: Extract Android Project
         run: |
           mkdir -p android-project
           unzip -o KaamSetu-Android-Cloud-Build-Ready.zip -d android-project
 
-      - name: Find Gradle and Build APK
+      - name: Locate Android Project and Build APK
         run: |
-          GRADLE_FILE=$(find android-project -name gradlew -type f | head -n 1)
-          if [ -z "$GRADLE_FILE" ]; then
-            echo "ERROR: gradlew file not found in ZIP"
+          SETTINGS_FILE=$(find android-project -type f \( -name settings.gradle -o -name settings.gradle.kts \) | head -n 1)
+
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "ERROR: Android Gradle project not found in ZIP"
+            find android-project -maxdepth 5 -type f | sort
             exit 1
           fi
-          PROJECT_DIR=$(dirname "$GRADLE_FILE")
+
+          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
+          echo "Building project in: $PROJECT_DIR"
           cd "$PROJECT_DIR"
-          chmod +x gradlew
-          ./gradlew assembleDebug
+          gradle --no-daemon assembleDebug
 
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
