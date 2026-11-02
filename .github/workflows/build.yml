@@ -1,3 +1,4 @@
+
 name: Build Android APK
 
 on:
@@ -20,7 +21,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Extract and Force Java 17
+      - name: Extract Project
         run: |
           mkdir -p extracted_zip
           if [ -f "KaamSetu-Android-Cloud-Build-Ready.zip" ]; then
@@ -28,21 +29,21 @@ jobs:
           else
             find . -name "KaamSetu-Android-Cloud-Build-Ready.zip" -exec unzip -o {} -d extracted_zip \;
           fi
-          
+
+      - name: Overwrite JVM Config and Build
+        run: |
           PROJECT_ROOT=$(find extracted_zip -maxdepth 4 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -exec dirname {} \; | head -n 1)
           if [ -z "$PROJECT_ROOT" ]; then
             echo "ERROR: Could not locate Gradle project root."
             exit 1
           fi
-          echo "PROJECT_ROOT=$PROJECT_ROOT" >> $GITHUB_ENV
-          
-          # Force Java 17 in gradle.properties
-          echo "org.gradle.java.home=$JAVA_HOME" >> "$PROJECT_ROOT/gradle.properties"
-          echo "org.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m" >> "$PROJECT_ROOT/gradle.properties"
-
-      - name: Build Debug APK
-        run: |
+          echo "Building in: $PROJECT_ROOT"
           cd "$PROJECT_ROOT"
+          
+          echo "Writing strict Java 17 configuration..."
+          echo "org.gradle.java.home=$JAVA_HOME" > gradle.properties
+          echo "org.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8" >> gradle.properties
+
           chmod +x gradlew || true
           if [ -f "./gradlew" ]; then
             ./gradlew assembleDebug --no-daemon
@@ -57,6 +58,8 @@ jobs:
           path: |
             **/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+
 
 
 
