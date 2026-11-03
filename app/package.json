@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "scripts": { "grant-admin": "node set-admin-claim.js" },
+  "dependencies": { "firebase-admin": "^13.0.0" }
+}
