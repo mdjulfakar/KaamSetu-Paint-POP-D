@@ -37,13 +37,12 @@ jobs:
           if [ -n "$ANDROID_SDK_ROOT" ]; then
             echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
           fi
-          echo "org.gradle.java.home=$JAVA_HOME" > gradle.properties
-          chmod +x gradlew || true
-          if [ -f "./gradlew" ]; then
-            ./gradlew assembleDebug --no-daemon
-          else
-            gradle assembleDebug --no-daemon
-          fi
+          echo "org.gradle.java.home=$JAVA_HOME" > gradle.propertiesgradle assembleDebug --no-daemon.
+    gradle assembleDebug --no-daemon
+
+
+
+      
 
 
 
