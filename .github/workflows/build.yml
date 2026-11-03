@@ -1,55 +1,29 @@
 
-name: Build Android APK
-
-on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Extract Project
-        run: |
-          mkdir -p extracted_zip
-          if [ -f "KaamSetu-Android-Cloud-Build-Ready.zip" ]; then
-            unzip -o KaamSetu-Android-Cloud-Build-Ready.zip -d extracted_zip
-          else
-            find . -name "KaamSetu-Android-Cloud-Build-Ready.zip" -exec unzip -o {} -d extracted_zip \;
-          fi
-
       - name: Build with Direct Android SDK
         run: |
-          PROJECT_ROOT=$(find . -maxdepth 4 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -exec dirname {} \; | head -n 1 | tr -d '\n')
+          export JAVA_HOME=$JAVA_HOME_17_X64
+          echo y | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          PROJECT_ROOT=$(find . -maxdepth 4 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1)
           if [ -z "$PROJECT_ROOT" ]; then
             PROJECT_ROOT="."
+          else
+            PROJECT_ROOT=$(dirname "$PROJECT_ROOT")
           fi
           echo "Building in: $PROJECT_ROOT"
           cd "$PROJECT_ROOT"
-
           if [ -n "$ANDROID_SDK_ROOT" ]; then
             echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
           fi
           echo "org.gradle.java.home=$JAVA_HOME" > gradle.properties
-
           chmod +x gradlew || true
-          if [ -f "gradlew" ]; then
+          if [ -f "./gradlew" ]; then
             ./gradlew assembleDebug --no-daemon
           else
             gradle assembleDebug --no-daemon
           fi
+
+
+
 
 
 
