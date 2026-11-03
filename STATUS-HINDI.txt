@@ -1,0 +1,25 @@
+KaamSetu – Paint & P.O.P | Android source package
+
+इस पैकेज में:
+- हिंदी/English language switch
+- Customer booking और gallery photo picker
+- Painter/POP worker registration
+- जम्मू-कश्मीर के 20 जिलों का चयन
+- Local Admin Dashboard: records, worker approval, booking assignment
+- Worker login और assigned job status update
+- Firebase Gradle dependencies और google-services.json
+- GitHub Actions workflow से Debug APK build करने की व्यवस्था (Java 17, Android SDK setup और Gradle 8.9)
+
+अभी की सीमाएँ:
+1. Records केवल उसी मोबाइल के SharedPreferences में हैं; multi-device sync नहीं।
+2. Photos केवल local URI हैं; Firebase Storage upload नहीं।
+3. Firebase dependencies/configuration मौजूद हैं, पर Auth/Firestore/Storage app code और security rules में live integration नहीं है।
+4. Worker login local phone-number matching है; OTP/secure identity नहीं।
+5. Admin PIN 123456 demo-only है।
+6. इस build environment में Android SDK/Gradle और internet access नहीं मिला; APK compile/device test यहाँ सत्यापित नहीं हुआ।
+
+APK build: GitHub repository root में package extract/upload करें, Actions > Build KaamSetu APK > Run workflow करें। Workflow पहले Android SDK setup करेगा, फिर clean Debug build चलाएगा। सफल run के Artifacts में KaamSetu-debug-apk मिलेगा।
+
+लागत: कोई paid hosting/API/payment/subscription/automatic payment नहीं जोड़ा गया। कोई paid billing मालिक की स्पष्ट मंजूरी के बिना enable न करें।
+
+Production से पहले: secure role-based auth, Firestore/Storage integration, security rules, privacy/data-safety review और multi-device end-to-end tests आवश्यक हैं।
