@@ -23,7 +23,9 @@ jobs:
       - name: Build with Direct Android SDK
         run: |
           export JAVA_HOME=$JAVA_HOME_17_X64
-          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          mkdir -p "$ANDROID_HOME/licenses"
+          echo "8933bad16b54b8faa38f4d4a04064f57c28e83c0" > "$ANDROID_HOME/licenses/android-sdk-license"
+          echo "d56f5187479751e6027bb1c9079a79895057228a" >> "$ANDROID_HOME/licenses/android-sdk-license"
           PROJECT_ROOT=$(find . -maxdepth 4 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1)
           if [ -z "$PROJECT_ROOT" ]; then
             PROJECT_ROOT="."
@@ -42,7 +44,6 @@ jobs:
           else
             gradle assembleDebug --no-daemon
           fi
-
 
 
 
