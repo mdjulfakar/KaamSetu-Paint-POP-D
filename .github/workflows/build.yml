@@ -1,5 +1,4 @@
-
-name: Build KaamSetu Email Password APK
+name: Build KaamSetu Android APK
 
 on:
   workflow_dispatch:
@@ -7,125 +6,52 @@ on:
     branches:
       - main
 
-permissions:
-  contents: read
-
 jobs:
   build:
+    name: Build KaamSetu APK
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Extract Android Project
-        shell: bash
-        run: |
-          set -e
-          ZIP_FILE="KaamSetu-Android-Cloud-Build-Ready.zip"
-
-          if [ ! -f "$ZIP_FILE" ]; then
-            echo "ERROR: Android project ZIP not found!"
-            exit 1
-          fi
-
-          mkdir -p source
-          unzip -q "$ZIP_FILE" -d source
-
-          PROJECT_DIR=$(find source -type f -name "settings.gradle.kts" -print -quit | xargs dirname)
-
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: Android project not found!"
-            exit 1
-          fi
-
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Project found: $PROJECT_DIR"
-
-      - name: Use Latest Email Password Login Code
-        shell: bash
-        run: |
-          set -e
-
-          DEST="$PROJECT_DIR/app/src/main/java/com/kaamsetu/app"
-          mkdir -p "$DEST"
-
-          cp app/MainActivity.kt "$DEST/MainActivity.kt"
-          cp app/google-services.json "$PROJECT_DIR/app/google-services.json"
-
-          echo "Latest MainActivity.kt copied successfully"
-          echo "Firebase configuration copied successfully"
-
-          grep -q "signInWithEmailAndPassword" "$DEST/MainActivity.kt"
-          grep -q "createUserWithEmailAndPassword" "$DEST/MainActivity.kt"
-
-      - name: Force Java and Kotlin JVM Target 17
-        shell: bash
-        run: |
-          set -e
-
-          APP_GRADLE="$PROJECT_DIR/app/build.gradle.kts"
-
-          cat >> "$APP_GRADLE" <<'GRADLE'
-
-          android {
-              compileOptions {
-                  sourceCompatibility = JavaVersion.VERSION_17
-                  targetCompatibility = JavaVersion.VERSION_17
-              }
-          }
-
-          tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-              kotlinOptions {
-                  jvmTarget = "17"
-              }
-          }
-          GRADLE
-
-      - name: Setup Java 17
+      - name: Set Up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK
+      - name: Set Up Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: platform-tools
-          accept-android-sdk-licenses: true
 
-      - name: Install Android SDK Packages
+      - name: Install Android SDK
         run: |
-          yes | sdkmanager --licenses
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          sdkmanager "platform-tools"
+          sdkmanager "platforms;android-35"
+          sdkmanager "build-tools;35.0.0"
 
-      - name: Setup Gradle
+      - name: Set Up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Build KaamSetu APK
+      - name: Find Project
         run: |
-          gradle --no-daemon -p "$PROJECT_DIR" clean :app:assembleDebug
+          find . -name settings.gradle.kts -print
 
-      - name: Verify APK
+      - name: Build Debug APK
         run: |
-          APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
-
-          if [ ! -f "$APK" ]; then
-            echo "ERROR: APK was not generated!"
-            exit 1
-          fi
-
-          echo "SUCCESS: New APK generated!"
-          ls -lh "$APK"
+          PROJECT_DIR=$(dirname "$(find . -name settings.gradle.kts -print -quit)")
+          cd "$PROJECT_DIR"
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: KaamSetu-Email-Password-APK
-          path: source/**/app/build/outputs/apk/debug/app-debug.apk
-          retention-days: 14
+          path: "**/build/outputs/apk/debug/*.apk"
+          if-no-files-found: error
 
           
 
