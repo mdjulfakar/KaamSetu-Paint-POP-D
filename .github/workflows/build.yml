@@ -1,59 +1,95 @@
+
 name: Build KaamSetu APK
 
 on:
-workflow_dispatch:
-push:
-branches: ["main"]
+  workflow_dispatch:
+  push:
+    branches:
+      - main
 
 permissions:
-contents: read
+  contents: read
 
 jobs:
-build:
-runs-on: ubuntu-latest
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
 
-steps:
-  - name: Checkout repository
-    uses: actions/checkout@v4
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-  - name: Extract Android source ZIP
-    run: |
-      unzip -q KaamSetu-Android-Cloud-Build-Ready.zip -d source
-      PROJECT_DIR="$(find source -type f -name settings.gradle.kts -printf '%h\n' | head -n 1)"
-      test -n "$PROJECT_DIR"
-      echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+      - name: Check and extract Android source ZIP
+        run: |
+          test -f "KaamSetu-Android-Cloud-Build-Ready.zip"
+          mkdir -p source
+          unzip -q "KaamSetu-Android-Cloud-Build-Ready.zip" -d source
 
-  - name: Set up Java 17
-    uses: actions/setup-java@v4
-    with:
-      distribution: temurin
-      java-version: "17"
+          PROJECT_FILE="$(find source -type f -name settings.gradle.kts -print -quit)"
 
-  - name: Set up Android SDK
-    uses: android-actions/setup-android@v3
+          if [ -z "$PROJECT_FILE" ]; then
+            echo "ERROR: settings.gradle.kts not found inside ZIP"
+            exit 1
+          fi
 
-  - name: Install Android SDK packages
-    run: |
-      sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          PROJECT_DIR="$(dirname "$PROJECT_FILE")"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-  - name: Set up Gradle 8.9
-    uses: gradle/actions/setup-gradle@v4
-    with:
-      gradle-version: "8.9"
+          echo "Android project found at: $PROJECT_DIR"
 
-  - name: Build debug APK
-    run: gradle --no-daemon -p "$PROJECT_DIR" clean :app:assembleDebug
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
 
-  - name: Verify APK exists
-    run: test -s "$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
-  - name: Upload installable debug APK
-    uses: actions/upload-artifact@v4
-    with:
-      name: KaamSetu-debug-apk
-      path: source/**/app/build/outputs/apk/debug/app-debug.apk
-      if-no-files-found: error
-      retention-days: 14
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses
+
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Check Gradle version
+        run: gradle --version
+
+      - name: Build KaamSetu Debug APK
+        run: |
+          gradle --no-daemon \
+            -p "$PROJECT_DIR" \
+            clean :app:assembleDebug
+
+      - name: Verify APK
+        run: |
+          APK_PATH="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -s "$APK_PATH" ]; then
+            echo "ERROR: APK was not generated"
+            exit 1
+          fi
+
+          echo "APK successfully generated:"
+          ls -lh "$APK_PATH"
+
+      - name: Upload KaamSetu APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: KaamSetu-debug-apk
+          path: source/**/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+          
 
 
     
