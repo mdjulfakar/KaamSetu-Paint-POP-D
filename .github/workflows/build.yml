@@ -29,7 +29,7 @@ jobs:
         uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools'
-          accept-android-sdk-licenses: 'yes'
+          accept-android-sdk-licenses: true
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -44,17 +44,21 @@ jobs:
             "build-tools;35.0.0"
 
       - name: Find Android Project
+        shell: bash
         run: |
           PROJECT_SETTINGS=$(find . -name settings.gradle.kts -print -quit)
+
           if [ -z "$PROJECT_SETTINGS" ]; then
             echo "Android project not found"
             exit 1
           fi
+
           PROJECT_DIR=$(dirname "$PROJECT_SETTINGS")
-          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
           echo "Found project: $PROJECT_DIR"
 
       - name: Build Debug APK
+        shell: bash
         run: |
           cd "$PROJECT_DIR"
           chmod +x gradlew
@@ -64,9 +68,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: KaamSetu-Email-Password-APK
-          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          path: "**/build/outputs/apk/debug/*.apk"
           if-no-files-found: error
           retention-days: 7
+
 
 
           
