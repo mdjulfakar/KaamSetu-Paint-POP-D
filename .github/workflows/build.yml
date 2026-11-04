@@ -27,14 +27,6 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
-        with:
-          packages: 'platform-tools'
-          accept-android-sdk-licenses: true
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
 
       - name: Install Android SDK Packages
         run: |
@@ -43,39 +35,55 @@ jobs:
             "platforms;android-35" \
             "build-tools;35.0.0"
 
-      - name: Find Android Project
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Prepare Android Project
         shell: bash
         run: |
-          PROJECT_SETTINGS=$(find . -name settings.gradle.kts -print -quit)
+          set -e
 
-          if [ -z "$PROJECT_SETTINGS" ]; then
-            echo "Android project not found"
-            exit 1
+          mkdir -p app/src/main/java/com/kaamsetu/app
+
+          cp app/MainActivity.kt \
+            app/src/main/java/com/kaamsetu/app/MainActivity.kt
+
+          cp app/AndroidManifest.xml \
+            app/src/main/AndroidManifest.xml
+
+          if [ -f app/FirebaseServices.kt ]; then
+            cp app/FirebaseServices.kt \
+              app/src/main/java/com/kaamsetu/app/FirebaseServices.kt
           fi
 
-          PROJECT_DIR=$(dirname "$PROJECT_SETTINGS")
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Found project: $PROJECT_DIR"
+          test -f settings.gradle.kts
+          test -f app/build.gradle.kts
+          test -f app/google-services.json
+          test -f app/src/main/AndroidManifest.xml
+          test -f app/src/main/java/com/kaamsetu/app/MainActivity.kt
+
+          cat > build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.7.3" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+              id("org.jetbrains.kotlin.plugin.compose") version "2.0.21" apply false
+              id("com.google.gms.google-services") version "4.4.2" apply false
+          }
+          EOF
 
       - name: Build Debug APK
-        shell: bash
         run: |
-          cd "$PROJECT_DIR"
-          chmod +x gradlew
-          ./gradlew --no-daemon assembleDebug --stacktrace
+          gradle --no-daemon :app:assembleDebug --stacktrace
 
       - name: Upload KaamSetu APK
         uses: actions/upload-artifact@v4
         with:
           name: KaamSetu-Email-Password-APK
-          path: "**/build/outputs/apk/debug/*.apk"
+          path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 7
-
-
-
-          
-
 
     
     
