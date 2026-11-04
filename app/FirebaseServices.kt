@@ -1,114 +1,234 @@
 package com.kaamsetu.app
 
 import android.app.Activity
-import android.net.Uri
-import com.google.firebase.FirebaseException
-import com.google.firebase.auth.*
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.storage.FirebaseStorage
-import java.util.concurrent.TimeUnit
 
-/** Firebase Phone Auth + cloud persistence used by the application. */
+/**
+ * KaamSetu Firebase Services
+ *
+ * Email and Password Authentication
+ * Firestore Booking Management
+ *
+ * OTP and Photo Upload are not used.
+ */
 class KaamSetuFirebase(private val activity: Activity) {
-    private val auth = FirebaseAuth.getInstance()
-    private val db = FirebaseFirestore.getInstance()
-    private val storage = FirebaseStorage.getInstance()
-    var verificationId: String? = null
-        private set
 
-    fun sendOtp(phone10: String, onCodeSent: () -> Unit, onError: (String) -> Unit) {
-        val phone = "+91${phone10.filter(Char::isDigit)}"
-        val options = PhoneAuthOptions.newBuilder(auth)
-            .setPhoneNumber(phone).setTimeout(60L, TimeUnit.SECONDS)
-            .setActivity(activity)
-            .setCallbacks(object : PhoneAuthProvider.OnVerificationStateChangedCallbacks() {
-                override fun onVerificationCompleted(credential: PhoneAuthCredential) {
-                    auth.signInWithCredential(credential).addOnFailureListener { onError(it.localizedMessage ?: "OTP verification failed") }
-                }
-                override fun onVerificationFailed(e: FirebaseException) { onError(e.localizedMessage ?: "OTP could not be sent") }
-                override fun onCodeSent(id: String, token: PhoneAuthProvider.ForceResendingToken) {
-                    verificationId = id
-                    onCodeSent()
-                }
-            }).build()
-        PhoneAuthProvider.verifyPhoneNumber(options)
+    private val auth: FirebaseAuth = FirebaseAuth.getInstance()
+    private val db: FirebaseFirestore = FirebaseFirestore.getInstance()
+
+    // Current logged-in user
+    fun currentUser(): FirebaseUser? {
+        return auth.currentUser
     }
 
-    fun verifyOtp(code: String, onSuccess: (FirebaseUser) -> Unit, onError: (String) -> Unit) {
-        val id = verificationId ?: return onError("पहले OTP भेजें / Send OTP first")
-        auth.signInWithCredential(PhoneAuthProvider.getCredential(id, code))
-            .addOnSuccessListener { result -> result.user?.let(onSuccess) ?: onError("Login failed") }
-            .addOnFailureListener { onError(it.localizedMessage ?: "Invalid OTP") }
-    }
-
-    fun saveRecord(record: KaamRecord, photoUri: Uri?, onSuccess: (KaamRecord) -> Unit, onError: (String) -> Unit) {
-        val user = auth.currentUser ?: return onError("Login required")
-        fun write(photoUrl: String) {
-            val data = hashMapOf<String, Any>(
-                "id" to record.id, "type" to record.type, "name" to record.name,
-                "phone" to record.phone, "district" to record.district, "area" to record.area,
-                "work" to record.work, "details" to record.details, "photo" to photoUrl,
-                "status" to record.status, "assignedWorkerPhone" to record.assignedWorkerPhone,
-                "assignedWorkerPhoneE164" to if (record.assignedWorkerPhone.length == 10) "+91${record.assignedWorkerPhone}" else "",
-                "ownerUid" to user.uid, "createdAt" to System.currentTimeMillis()
-            )
-            db.collection("records").document(record.id).set(data)
-                .addOnSuccessListener { onSuccess(record.copy(photo = photoUrl)) }
-                .addOnFailureListener { onError(it.localizedMessage ?: "Cloud save failed") }
+    // Register with Email and Password
+    fun registerWithEmail(
+        email: String,
+        password: String,
+        onSuccess: (FirebaseUser) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        if (email.isBlank() || password.length < 6) {
+            onError("Valid Email और कम से कम 6 अक्षर का Password भरें")
+            return
         }
-        if (photoUri == null) write("") else {
-            val ref = storage.reference.child("record_photos/${user.uid}/${record.id}.jpg")
-            ref.putFile(photoUri).continueWithTask { task ->
-                if (!task.isSuccessful) throw (task.exception ?: Exception("Photo upload failed"))
-                ref.downloadUrl
-            }.addOnSuccessListener { write(it.toString()) }
-                .addOnFailureListener { onError(it.localizedMessage ?: "Photo upload failed") }
-        }
-    }
 
-    fun observeRecords(onRecords: (List<KaamRecord>) -> Unit, onError: (String) -> Unit) {
-        val user = auth.currentUser ?: return onError("Login required")
-        user.getIdToken(false).addOnSuccessListener { token ->
-            if (token.claims["admin"] == true) {
-                db.collection("records").addSnapshotListener { snapshot, error ->
-                    if (error != null) { onError(error.localizedMessage ?: "Cloud sync failed"); return@addSnapshotListener }
-                    onRecords(snapshot?.documents.orEmpty().mapNotNull { it.toKaamRecord() })
-                }
+        auth.createUserWithEmailAndPassword(
+            email.trim(),
+            password
+        ).addOnSuccessListener { result ->
+
+            val user = result.user
+
+            if (user != null) {
+                onSuccess(user)
             } else {
-                val ownerRecords = mutableMapOf<String, KaamRecord>()
-                val assignedRecords = mutableMapOf<String, KaamRecord>()
-                fun publish() = onRecords((ownerRecords.values + assignedRecords.values).associateBy { it.id }.values.toList())
-                db.collection("records").whereEqualTo("ownerUid", user.uid)
-                    .addSnapshotListener { snapshot, error ->
-                        if (error != null) { onError(error.localizedMessage ?: "Cloud sync failed"); return@addSnapshotListener }
-                        ownerRecords.clear(); snapshot?.documents.orEmpty().mapNotNull { it.toKaamRecord() }.forEach { ownerRecords[it.id] = it }; publish()
-                    }
-                val phoneE164 = user.phoneNumber
-                if (!phoneE164.isNullOrBlank()) {
-                    db.collection("records").whereEqualTo("assignedWorkerPhoneE164", phoneE164)
-                        .addSnapshotListener { snapshot, error ->
-                            if (error != null) { onError(error.localizedMessage ?: "Assigned jobs sync failed"); return@addSnapshotListener }
-                            assignedRecords.clear(); snapshot?.documents.orEmpty().mapNotNull { it.toKaamRecord() }.forEach { assignedRecords[it.id] = it }; publish()
-                        }
-                }
+                onError("Account नहीं बन पाया")
             }
-        }.addOnFailureListener { onError(it.localizedMessage ?: "Could not check account role") }
+
+        }.addOnFailureListener { error ->
+            onError(error.localizedMessage ?: "Registration Failed")
+        }
     }
 
-    private fun com.google.firebase.firestore.DocumentSnapshot.toKaamRecord(): KaamRecord? = try {
-        KaamRecord(
-            getString("id") ?: id, getString("type") ?: "", getString("name") ?: "",
-            getString("phone") ?: "", getString("district") ?: "", getString("area") ?: "",
-            getString("work") ?: "", getString("details") ?: "", getString("photo") ?: "",
-            getString("status") ?: "नई", getString("assignedWorkerPhone") ?: ""
-        )
-    } catch (_: Exception) { null }
+    // Login with Email and Password
+    fun loginWithEmail(
+        email: String,
+        password: String,
+        onSuccess: (FirebaseUser) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        if (email.isBlank() || password.isBlank()) {
+            onError("Email और Password भरें")
+            return
+        }
 
-    fun updateRecord(record: KaamRecord, onError: (String) -> Unit = {}) {
-        if (auth.currentUser == null) return onError("Login required")
-        db.collection("records").document(record.id).update(
-            mapOf("status" to record.status, "assignedWorkerPhone" to record.assignedWorkerPhone,
-                 "assignedWorkerPhoneE164" to if (record.assignedWorkerPhone.length == 10) "+91${record.assignedWorkerPhone}" else "")
-        ).addOnFailureListener { onError(it.localizedMessage ?: "Update failed") }
+        auth.signInWithEmailAndPassword(
+            email.trim(),
+            password
+        ).addOnSuccessListener { result ->
+
+            val user = result.user
+
+            if (user != null) {
+                onSuccess(user)
+            } else {
+                onError("Login Failed")
+            }
+
+        }.addOnFailureListener { error ->
+            onError(error.localizedMessage ?: "Login Failed")
+        }
+    }
+
+    // Save user profile
+    fun saveUserProfile(
+        uid: String,
+        name: String,
+        phone: String,
+        email: String,
+        role: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val profile = hashMapOf(
+            "name" to name.trim(),
+            "phone" to phone.trim(),
+            "email" to email.trim(),
+            "role" to role
+        )
+
+        db.collection("users")
+            .document(uid)
+            .set(profile)
+            .addOnSuccessListener {
+                onSuccess()
+            }
+            .addOnFailureListener { error ->
+                onError(error.localizedMessage ?: "Profile Save Failed")
+            }
+    }
+
+    // Save customer booking
+    fun saveBooking(
+        booking: Booking,
+        onSuccess: (String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val user = auth.currentUser
+
+        if (user == null) {
+            onError("पहले Login करें")
+            return
+        }
+
+        db.collection("bookings")
+            .add(booking)
+            .addOnSuccessListener { document ->
+                onSuccess(document.id)
+            }
+            .addOnFailureListener { error ->
+                onError(error.localizedMessage ?: "Booking Save Failed")
+            }
+    }
+
+    // Load bookings for customer, worker or admin
+    fun loadBookings(
+        uid: String,
+        role: String,
+        onSuccess: (List<Pair<String, Booking>>) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val query = when (role) {
+            "customer" -> db.collection("bookings")
+                .whereEqualTo("ownerUid", uid)
+
+            "worker" -> db.collection("bookings")
+                .whereEqualTo("assignedWorkerUid", uid)
+
+            "admin" -> db.collection("bookings")
+
+            else -> {
+                onError("Invalid account role")
+                return
+            }
+        }
+
+        query.get()
+            .addOnSuccessListener { result ->
+
+                val bookingList = result.documents.mapNotNull { document ->
+
+                    val booking = document.toObject(Booking::class.java)
+
+                    if (booking != null) {
+                        Pair(document.id, booking)
+                    } else {
+                        null
+                    }
+                }
+
+                onSuccess(bookingList)
+            }
+            .addOnFailureListener { error ->
+                onError(error.localizedMessage ?: "Bookings Load Failed")
+            }
+    }
+
+    // Update booking status
+    fun updateBookingStatus(
+        bookingId: String,
+        status: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        if (auth.currentUser == null) {
+            onError("पहले Login करें")
+            return
+        }
+
+        db.collection("bookings")
+            .document(bookingId)
+            .update("status", status)
+            .addOnSuccessListener {
+                onSuccess()
+            }
+            .addOnFailureListener { error ->
+                onError(error.localizedMessage ?: "Status Update Failed")
+            }
+    }
+
+    // Assign painter to booking
+    fun assignPainter(
+        bookingId: String,
+        painterUid: String,
+        painterEmail: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val updates = mapOf(
+            "assignedWorkerUid" to painterUid,
+            "assignedWorkerEmail" to painterEmail,
+            "status" to "Assigned"
+        )
+
+        db.collection("bookings")
+            .document(bookingId)
+            .update(updates)
+            .addOnSuccessListener {
+                onSuccess()
+            }
+            .addOnFailureListener { error ->
+                onError(error.localizedMessage ?: "Painter Assignment Failed")
+            }
+    }
+
+    // Logout
+    fun logout() {
+        auth.signOut()
     }
 }
+         
+
