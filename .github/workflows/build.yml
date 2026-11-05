@@ -46,8 +46,8 @@ jobs:
 
           mkdir -p app/src/main/java/com/kaamsetu/app
 
-          cp app/MainActivity.kt \
-            app/src/main/java/com/kaamsetu/app/MainActivity.kt
+          cp app/MainActivity_KaamSetu_Fresh.kt \
+  
 
           cp app/AndroidManifest.xml \
             app/src/main/AndroidManifest.xml
