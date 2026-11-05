@@ -93,7 +93,9 @@ fun KaamSetuApp() {
 
     var registering by remember {
         mutableStateOf(false)
-    }
+    } var showRegistrationSuccessDialog by remember {
+    mutableStateOf(false)
+}
 
     var currentUser by remember {
         mutableStateOf(auth.currentUser)
@@ -406,17 +408,32 @@ fun KaamSetuApp() {
                     .set(profile)
                     .addOnSuccessListener {
 
-                        loading = false
+                {
 
-                        message = tr(
-                            "Successfully Submitted! Please log in.",
-                            "सफलतापूर्वक जमा हुआ! अब लॉगिन करें।"
+    auth.signOut()
+    currentUser = null
+    userRole = ""
+    userName = ""
+    bookings = emptyList()
+
+    loading = false
+    registering = false
+    password = ""
+    screen = "auth"
+    message = ""
+
+    showRegistrationSuccessDialog = true
+}
+
+                        
+                            
+                            
                         )
 
-                        registering = false
-                        password = ""
+                        
+                        
 
-                        screen = "auth";
+                        
 
 
                     
