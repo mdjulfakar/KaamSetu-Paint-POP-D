@@ -1,4 +1,3 @@
-
 name: Build KaamSetu Android APK
 
 on:
@@ -52,11 +51,6 @@ jobs:
 
           cp app/AndroidManifest.xml \
             app/src/main/AndroidManifest.xml
-
-          if [ -f app/FirebaseServices.kt ]; then
-            cp app/FirebaseServices.kt \
-              app/src/main/java/com/kaamsetu/app/FirebaseServices.kt
-          fi
 
           test -f settings.gradle.kts
           test -f app/build.gradle.kts
