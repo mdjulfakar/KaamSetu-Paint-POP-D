@@ -736,7 +736,34 @@ fun KaamSetuApp() {
                 message,
                 color = MaterialTheme.colorScheme.primary
             )
+        } if (showRegistrationSuccessDialog) {
+    AlertDialog(
+        onDismissRequest = {},
+        title = {
+            Text(tr("Registration Successful", "रजिस्ट्रेशन सफल"))
+        },
+        text = {
+            Text(
+                tr(
+                    "Your account has been created successfully. Please press OK and log in when you are ready.",
+                    "आपका अकाउंट सफलतापूर्वक बन गया है। OK दबाएँ और जब चाहें खुद लॉगिन करें।"
+                )
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    showRegistrationSuccessDialog = false
+                    registering = false
+                    screen = "auth"
+                    message = ""
+                }
+            ) {
+                Text("OK")
+            }
         }
+    )
+}
 
         if (loading) {
             LinearProgressIndicator(
