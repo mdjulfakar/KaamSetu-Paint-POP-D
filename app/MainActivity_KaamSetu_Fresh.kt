@@ -1,10 +1,7 @@
 package com.kaamsetu.app
 import android.os.Bundle
-import android.net.Uri
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -16,7 +13,6 @@ import androidx.compose.ui.unit.dp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.storage.FirebaseStorage
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -37,10 +33,6 @@ private val db: FirebaseFirestore by lazy {
     FirebaseFirestore.getInstance()
 }
 
-private val storage: FirebaseStorage by lazy {
-    FirebaseStorage.getInstance()
-}
-
 private val districts = listOf(
     "Srinagar", "Jammu", "Anantnag", "Baramulla", "Budgam",
     "Kupwara", "Pulwama", "Shopian", "Ganderbal", "Bandipora",
@@ -56,7 +48,6 @@ private data class AppBooking(
     val address: String = "",
     val category: String = "",
     val details: String = "",
-    val photoUrls: List<String> = emptyList(),
     val status: String = "New",
     val assignedWorkerUid: String = "",
     val assignedWorkerEmail: String = "",
@@ -92,7 +83,6 @@ fun KaamSetuApp() {
     // Customer booking details
     var category by remember { mutableStateOf("Painting") }
     var details by remember { mutableStateOf("") }
-    var bookingPhotos by remember { mutableStateOf<List<Uri>>(emptyList()) }
 
     // Admin assignment
     var workerEmail by remember { mutableStateOf("") }
@@ -123,15 +113,6 @@ fun KaamSetuApp() {
 
     var message by remember {
         mutableStateOf("")
-    }
-
-    val photoPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetMultipleContents()
-    ) { uris ->
-        bookingPhotos = uris.take(4)
-        if (uris.size > 4) {
-            message = tr("Only the first 4 photos were selected.", "केवल पहली 4 फोटो चुनी गई हैं।")
-        }
     }
 
     var loading by remember {
@@ -536,10 +517,14 @@ fun KaamSetuApp() {
             }
     }
 
-    // Customer creates a booking; at least one and at most four photos are required.
+    // Customer creates a booking without image attachments.
     fun createBooking() {
 
-        val user = currentUser ?: return
+        val user = currentUser
+        if (user == null) {
+            message = tr("Please log in again.", "कृपया दोबारा लॉगिन करें।")
+            return
+        }
 
         if (
             fullName.isBlank() ||
@@ -554,76 +539,35 @@ fun KaamSetuApp() {
             return
         }
 
-        if (bookingPhotos.isEmpty()) {
-            message = tr(
-                "Please add at least one work photo (maximum 4).",
-                "कृपया काम की कम से कम एक फोटो जोड़ें (अधिकतम 4)।"
-            )
-            return
-        }
-
         loading = true
-        message = tr("Uploading work photos...", "काम की फोटो अपलोड हो रही हैं...")
+        message = tr("Saving booking...", "बुकिंग सेव हो रही है...")
 
-        val urls = mutableListOf<String>()
-        var completed = 0
-        var failed = false
+        val booking = AppBooking(
+            ownerUid = user.uid,
+            customerName = fullName.trim(),
+            phone = phone.trim(),
+            district = district,
+            address = address.trim(),
+            category = category,
+            details = details.trim(),
+            status = "New"
+        )
 
-        bookingPhotos.forEachIndexed { index, uri ->
-            val photoRef = storage.reference
-                .child("bookingPhotos/${user.uid}/${System.currentTimeMillis()}_$index.jpg")
-
-            photoRef.putFile(uri)
-                .continueWithTask { task ->
-                    if (!task.isSuccessful) {
-                        throw task.exception ?: Exception("Photo upload failed")
-                    }
-                    photoRef.downloadUrl
-                }
-                .addOnSuccessListener { downloadUri ->
-                    if (failed) return@addOnSuccessListener
-                    urls.add(downloadUri.toString())
-                    completed++
-
-                    if (completed == bookingPhotos.size) {
-                        val booking = AppBooking(
-                            ownerUid = user.uid,
-                            customerName = fullName.trim(),
-                            phone = phone.trim(),
-                            district = district,
-                            address = address.trim(),
-                            category = category,
-                            details = details.trim(),
-                            photoUrls = urls.toList(),
-                            status = "New"
-                        )
-
-                        db.collection("bookings")
-                            .add(booking)
-                            .addOnSuccessListener {
-                                loading = false
-                                message = tr(
-                                    "Booking submitted successfully!",
-                                    "बुकिंग सफलतापूर्वक जमा हुई!"
-                                )
-                                details = ""
-                                bookingPhotos = emptyList()
-                                loadBookings(user, "customer")
-                            }
-                            .addOnFailureListener { e ->
-                                loading = false
-                                message = "${tr("Booking failed", "बुकिंग नहीं हुई")}: ${e.message}"
-                            }
-                    }
-                }
-                .addOnFailureListener { e ->
-                    if (!failed) {
-                        failed = true
-                        loading = false
-                        message = "${tr("Photo upload failed", "फोटो अपलोड नहीं हुई")}: ${e.message}"
-                    }
-                }
-        }
+        db.collection("bookings")
+            .add(booking)
+            .addOnSuccessListener { document ->
+                loading = false
+                message = tr(
+                    "Booking submitted successfully! Reference: ${document.id}",
+                    "बुकिंग सफलतापूर्वक जमा हुई! रेफरेंस: ${document.id}"
+                )
+                details = ""
+                loadBookings(user, "customer")
+            }
+            .addOnFailureListener { e ->
+                loading = false
+                message = "${tr("Booking failed", "बुकिंग सेव नहीं हुई")}: ${e.message}"
+            }
     }
 
     // Admin assigns a painter to a booking
@@ -1027,7 +971,6 @@ fun KaamSetuApp() {
                         currentUser = null
                         userRole = ""
                         bookings = emptyList()
-                        bookingPhotos = emptyList()
                         screen = "auth"
                         registering = false
 
@@ -1124,45 +1067,6 @@ fun KaamSetuApp() {
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 3
                 )
-
-                OutlinedButton(
-                    onClick = { photoPicker.launch("image/*") },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !loading
-                ) {
-                    Text(
-                        tr(
-                            "Choose work photos (1 to 4)",
-                            "काम की फोटो चुनें (1 से 4)"
-                        )
-                    )
-                }
-
-                Text(
-                    tr(
-                        "Selected photos: ${bookingPhotos.size}/4",
-                        "चुनी गई फोटो: ${bookingPhotos.size}/4"
-                    )
-                )
-
-                bookingPhotos.forEachIndexed { index, uri ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            tr("Photo ${index + 1} selected", "फोटो ${index + 1} चुनी गई"),
-                            modifier = Modifier.weight(1f)
-                        )
-                        TextButton(
-                            onClick = {
-                                bookingPhotos = bookingPhotos.filterIndexed { i, _ -> i != index }
-                            }
-                        ) {
-                            Text(tr("Remove", "हटाएँ"))
-                        }
-                    }
-                }
 
                 Button(
                     onClick = { createBooking() },
@@ -1463,10 +1367,6 @@ private fun BookingCard(
                 "${if (hindi) "स्थिति" else "Status"}: ${b.status}"
             )
 
-            if (b.photoUrls.isNotEmpty()) {
-                Text("${if (hindi) "काम की फोटो" else "Work photos"}: ${b.photoUrls.size}")
-            }
-
             if (b.assignedWorkerEmail.isNotBlank()) {
 
                 Text(
@@ -1544,3 +1444,5 @@ private fun BookingList(
 }
               
                 
+
+
