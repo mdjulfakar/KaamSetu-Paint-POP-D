@@ -1,4 +1,5 @@
 
+   
 package com.kaamsetu.app
 
 import android.os.Bundle
@@ -26,10 +27,17 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private val auth = FirebaseAuth.getInstance()
-private val db = FirebaseFirestore.getInstance()
+private val auth: FirebaseAuth by lazy { FirebaseAuth.getInstance() }
+private val db: FirebaseFirestore by lazy { FirebaseFirestore.getInstance() }
 
-data class Booking(
+private val districts = listOf(
+    "Srinagar", "Jammu", "Anantnag", "Baramulla", "Budgam",
+    "Kupwara", "Pulwama", "Shopian", "Ganderbal", "Bandipora",
+    "Kulgam", "Doda", "Kishtwar", "Ramban", "Kathua",
+    "Samba", "Udhampur", "Rajouri", "Poonch", "Reasi"
+)
+
+private data class AppBooking(
     val ownerUid: String = "",
     val customerName: String = "",
     val phone: String = "",
@@ -39,211 +47,241 @@ data class Booking(
     val details: String = "",
     val status: String = "New",
     val assignedWorkerUid: String = "",
-    val assignedWorkerEmail: String = ""
+    val assignedWorkerEmail: String = "",
+    val createdAt: Long = System.currentTimeMillis()
 )
+
+private data class BookingRow(val id: String, val booking: AppBooking)
 
 @Composable
 fun KaamSetuApp() {
     var hindi by remember { mutableStateOf(true) }
-
-    fun tr(en: String, hi: String) = if (hindi) hi else en
+    fun tr(en: String, hi: String): String = if (hindi) hi else en
 
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var name by remember { mutableStateOf("") }
+    var fullName by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
-
-    var selectedRole by remember { mutableStateOf("customer") }
-    var registering by remember { mutableStateOf(false) }
-
-    var currentUser by remember { mutableStateOf(auth.currentUser) }
-    var userRole by remember { mutableStateOf("") }
-    var screen by remember { mutableStateOf("home") }
-
-    var message by remember { mutableStateOf("") }
-    var loading by remember { mutableStateOf(false) }
-
-    var district by remember { mutableStateOf("") }
+    var district by remember { mutableStateOf(districts.first()) }
     var address by remember { mutableStateOf("") }
     var category by remember { mutableStateOf("Painting") }
     var details by remember { mutableStateOf("") }
     var workerEmail by remember { mutableStateOf("") }
 
-    var bookings by remember {
-        mutableStateOf(listOf<Pair<String, Booking>>())
-    }
+    var selectedRole by remember { mutableStateOf("customer") }
+    var registering by remember { mutableStateOf(false) }
+    var currentUser by remember { mutableStateOf(auth.currentUser) }
+    var userRole by remember { mutableStateOf("") }
+    var userName by remember { mutableStateOf("") }
+    var screen by remember { mutableStateOf("auth") }
+    var message by remember { mutableStateOf("") }
+    var loading by remember { mutableStateOf(false) }
+    var bookings by remember { mutableStateOf(listOf<BookingRow>()) }
 
-    val districts = listOf(
-        "Srinagar", "Jammu", "Anantnag", "Baramulla",
-        "Budgam", "Kupwara", "Pulwama", "Shopian",
-        "Ganderbal", "Bandipora", "Kulgam", "Doda",
-        "Kishtwar", "Ramban", "Kathua", "Samba",
-        "Udhampur", "Rajouri", "Poonch", "Reasi"
-    )
-
-    fun loadBookings(uid: String, role: String) {
+    fun loadBookings(user: FirebaseUser, role: String) {
         val query = when (role) {
             "customer" -> db.collection("bookings")
-                .whereEqualTo("ownerUid", uid)
+                .whereEqualTo("ownerUid", user.uid)
             "worker" -> db.collection("bookings")
-                .whereEqualTo("assignedWorkerUid", uid)
+                .whereEqualTo("assignedWorkerUid", user.uid)
             else -> db.collection("bookings")
         }
 
         query.get()
             .addOnSuccessListener { result ->
                 bookings = result.documents.mapNotNull { doc ->
-                    doc.toObject(Booking::class.java)
-                        ?.let { Pair(doc.id, it) }
+                    doc.toObject(AppBooking::class.java)
+                        ?.let { BookingRow(doc.id, it) }
                 }
             }
-            .addOnFailureListener {
-                message = "Bookings error: ${it.message}"
+            .addOnFailureListener { e ->
+                message = "${tr("Could not load bookings", "बुकिंग लोड नहीं हुई")}: ${e.message}"
             }
     }
 
-    fun openAccount(user: FirebaseUser) {
+    fun enterAccount(user: FirebaseUser) {
         loading = true
-
         user.getIdToken(true)
             .addOnSuccessListener { token ->
-                if (token.claims["admin"] == true) {
-                    currentUser = user
-                    userRole = "admin"
-                    screen = "home"
-                    message = tr("Admin login successful", "एडमिन लॉगिन सफल")
-                    loadBookings(user.uid, "admin")
-                    loading = false
-                } else {
-                    db.collection("users").document(user.uid).get()
-                        .addOnSuccessListener { doc ->
-                            val role = doc.getString("role") ?: ""
+                val isAdminClaim = token.claims["admin"] == true
 
-                            if (role == "customer" || role == "worker") {
-                                currentUser = user
-                                userRole = role
-                                name = doc.getString("name") ?: ""
-                                phone = doc.getString("phone") ?: ""
-                                screen = "home"
-                                message = tr("Login successful", "लॉगिन सफल")
-                                loadBookings(user.uid, role)
-                            } else {
-                                auth.signOut()
-                                currentUser = null
-                                userRole = ""
-                                message = tr(
-                                    "Account role not found",
-                                    "अकाउंट की भूमिका नहीं मिली"
-                                )
-                            }
+                db.collection("users").document(user.uid).get()
+                    .addOnSuccessListener { doc ->
+                        val savedRole = doc.getString("role") ?: ""
+                        val role = if (isAdminClaim) "admin" else savedRole
+
+                        if (role !in listOf("customer", "worker", "admin")) {
                             loading = false
+                            auth.signOut()
+                            currentUser = null
+                            message = tr(
+                                "This account has no valid role. Contact the administrator.",
+                                "इस अकाउंट की भूमिका सही नहीं है। एडमिन से संपर्क करें।"
+                            )
+                            return@addOnSuccessListener
                         }
-                        .addOnFailureListener {
-                            message = it.message ?: "Profile error"
-                            loading = false
+
+                        currentUser = user
+                        userRole = role
+                        userName = doc.getString("name") ?: user.email.orEmpty()
+                        fullName = userName
+                        phone = doc.getString("phone") ?: ""
+                        screen = "dashboard"
+
+                        message = if (role == "admin") {
+                            tr("Admin login successful", "एडमिन लॉगिन सफल")
+                        } else {
+                            tr("Login successful", "लॉगिन सफल")
                         }
-                }
+
+                        loadBookings(user, role)
+                        loading = false
+                    }
+                    .addOnFailureListener { e ->
+                        loading = false
+                        message = e.message ?: tr(
+                            "Profile could not be loaded",
+                            "प्रोफाइल लोड नहीं हुई"
+                        )
+                    }
             }
-            .addOnFailureListener {
-                message = it.message ?: "Permission check failed"
+            .addOnFailureListener { e ->
                 loading = false
+                message = e.message ?: tr(
+                    "Login verification failed",
+                    "लॉगिन सत्यापन विफल"
+                )
             }
     }
 
-    fun login() {
-        if (email.isBlank() || password.isBlank()) {
-            message = tr("Enter email and password", "Email और Password भरें")
+    fun signIn(role: String) {
+        val cleanEmail = email.trim().lowercase()
+
+        if (cleanEmail.isBlank() || password.isBlank()) {
+            message = tr("Enter email and password", "ईमेल और पासवर्ड भरें")
             return
         }
 
         loading = true
-        auth.signInWithEmailAndPassword(email.trim(), password)
+
+        auth.signInWithEmailAndPassword(cleanEmail, password)
             .addOnSuccessListener { result ->
                 val user = result.user
-                if (user != null) openAccount(user)
-                else {
+
+                if (user == null) {
                     loading = false
-                    message = "User not found"
+                    message = tr("Login failed", "लॉगिन असफल")
+                } else if (role == "admin") {
+                    enterAccount(user)
+                } else {
+                    db.collection("users").document(user.uid).get()
+                        .addOnSuccessListener { doc ->
+                            val savedRole = doc.getString("role") ?: ""
+
+                            if (savedRole != role) {
+                                auth.signOut()
+                                currentUser = null
+                                loading = false
+                                message = tr(
+                                    "This account belongs to a different login type",
+                                    "यह अकाउंट दूसरे लॉगिन प्रकार का है"
+                                )
+                            } else {
+                                enterAccount(user)
+                            }
+                        }
+                        .addOnFailureListener { e ->
+                            loading = false
+                            message = e.message ?: "Profile error"
+                        }
                 }
             }
-            .addOnFailureListener {
-                message = it.message ?: "Login failed"
+            .addOnFailureListener { e ->
                 loading = false
+                message = e.message ?: tr("Login failed", "लॉगिन असफल")
             }
     }
 
     fun register() {
-        if (name.isBlank() || phone.length != 10 ||
-            email.isBlank() || password.length < 6
+        val cleanEmail = email.trim().lowercase()
+
+        if (fullName.isBlank() || phone.isBlank() ||
+            cleanEmail.isBlank() || password.length < 6 ||
+            address.isBlank()
         ) {
             message = tr(
-                "Enter name, 10-digit mobile, email and password (minimum 6 characters)",
-                "नाम, 10 अंकों का मोबाइल, Email और कम से कम 6 अक्षर का Password भरें"
+                "Fill name, phone, email, password (at least 6 characters), and address",
+                "नाम, मोबाइल, ईमेल, कम से कम 6 अक्षर का पासवर्ड और पता भरें"
             )
             return
         }
 
         loading = true
-        auth.createUserWithEmailAndPassword(email.trim(), password)
+
+        auth.createUserWithEmailAndPassword(cleanEmail, password)
             .addOnSuccessListener { result ->
                 val user = result.user
+
                 if (user == null) {
                     loading = false
-                    message = "Registration failed"
+                    message = tr("Registration failed", "रजिस्ट्रेशन असफल")
                     return@addOnSuccessListener
                 }
 
                 val profile = hashMapOf(
-                    "name" to name.trim(),
+                    "uid" to user.uid,
+                    "name" to fullName.trim(),
                     "phone" to phone.trim(),
-                    "email" to email.trim(),
-                    "role" to selectedRole
+                    "email" to cleanEmail,
+                    "district" to district,
+                    "address" to address.trim(),
+                    "role" to selectedRole,
+                    "createdAt" to System.currentTimeMillis()
                 )
 
-                db.collection("users").document(user.uid)
-                    .set(profile)
+                db.collection("users").document(user.uid).set(profile)
                     .addOnSuccessListener {
-                        currentUser = user
-                        userRole = selectedRole
-                        screen = "home"
+                        loading = false
                         message = tr(
-                            "Registration successful",
-                            "रजिस्ट्रेशन सफल हुआ"
+                            "Successfully Submitted! Please log in.",
+                            "सफलतापूर्वक जमा हुआ! अब लॉगिन करें।"
                         )
-                        loading = false
-                        loadBookings(user.uid, selectedRole)
+                        registering = false
+                        password = ""
+                        auth.signOut()
+                        currentUser = null
                     }
-                    .addOnFailureListener {
-                        message = it.message ?: "Profile save failed"
+                    .addOnFailureListener { e ->
                         loading = false
+                        message = "${tr("Profile save failed", "प्रोफाइल सेव नहीं हुई")}: ${e.message}"
                     }
             }
-            .addOnFailureListener {
-                message = it.message ?: "Registration failed"
+            .addOnFailureListener { e ->
                 loading = false
+                message = e.message ?: tr("Registration failed", "रजिस्ट्रेशन असफल")
             }
     }
 
-    fun saveBooking() {
+    fun createBooking() {
         val user = currentUser ?: return
 
-        if (name.isBlank() || phone.length != 10 ||
-            district.isBlank() || address.isBlank() ||
-            details.isBlank()
+        if (fullName.isBlank() || phone.isBlank() ||
+            address.isBlank() || details.isBlank()
         ) {
             message = tr(
-                "Fill all booking details",
-                "बुकिंग की सभी जानकारी भरें"
+                "Enter customer name, phone, complete address, and work details",
+                "ग्राहक का नाम, मोबाइल, पूरा पता और काम की जानकारी भरें"
             )
             return
         }
 
         loading = true
-        val booking = Booking(
+
+        val booking = AppBooking(
             ownerUid = user.uid,
-            customerName = name.trim(),
+            customerName = fullName.trim(),
             phone = phone.trim(),
-            district = district.trim(),
+            district = district,
             address = address.trim(),
             category = category,
             details = details.trim(),
@@ -252,177 +290,159 @@ fun KaamSetuApp() {
 
         db.collection("bookings").add(booking)
             .addOnSuccessListener {
-                message = tr("Booking saved successfully", "बुकिंग सफलतापूर्वक सेव हुई")
-                district = ""
-                address = ""
+                loading = false
+                message = tr(
+                    "Booking submitted successfully!",
+                    "बुकिंग सफलतापूर्वक जमा हुई!"
+                )
                 details = ""
-                screen = "myBookings"
-                loading = false
-                loadBookings(user.uid, "customer")
+                loadBookings(user, "customer")
             }
-            .addOnFailureListener {
-                message = it.message ?: "Booking save failed"
+            .addOnFailureListener { e ->
                 loading = false
+                message = "${tr("Booking failed", "बुकिंग नहीं हुई")}: ${e.message}"
             }
     }
 
-    fun updateStatus(id: String, status: String) {
-        db.collection("bookings").document(id)
-            .update("status", status)
-            .addOnSuccessListener {
-                message = tr("Status updated", "काम का स्टेटस अपडेट हुआ")
-                currentUser?.let { loadBookings(it.uid, userRole) }
-            }
-            .addOnFailureListener {
-                message = it.message ?: "Update failed"
-            }
-    }
+    fun assignWorker(row: BookingRow) {
+        val targetEmail = workerEmail.trim().lowercase()
 
-    fun assignWorker(id: String) {
-        if (workerEmail.isBlank()) {
-            message = tr("Enter painter email", "पेंटर का Email भरें")
+        if (targetEmail.isBlank()) {
+            message = tr(
+                "Enter painter's registered email",
+                "पेंटर का रजिस्टर्ड ईमेल भरें"
+            )
             return
         }
 
         loading = true
+
         db.collection("users")
-            .whereEqualTo("email", workerEmail.trim())
+            .whereEqualTo("email", targetEmail)
             .whereEqualTo("role", "worker")
+            .limit(1)
             .get()
             .addOnSuccessListener { result ->
-                val painter = result.documents.firstOrNull()
+                val worker = result.documents.firstOrNull()
 
-                if (painter == null) {
-                    message = tr("Painter not found", "पेंटर नहीं मिला")
+                if (worker == null) {
                     loading = false
+                    message = tr(
+                        "Painter account not found",
+                        "पेंटर का अकाउंट नहीं मिला"
+                    )
                 } else {
-                    db.collection("bookings").document(id)
+                    val uid = worker.getString("uid") ?: worker.id
+
+                    db.collection("bookings").document(row.id)
                         .update(
                             mapOf(
-                                "assignedWorkerUid" to painter.id,
-                                "assignedWorkerEmail" to
-                                    (painter.getString("email") ?: ""),
+                                "assignedWorkerUid" to uid,
+                                "assignedWorkerEmail" to targetEmail,
                                 "status" to "Assigned"
                             )
                         )
                         .addOnSuccessListener {
+                            loading = false
                             message = tr(
-                                "Work assigned successfully",
-                                "पेंटर को काम दे दिया गया"
+                                "Painter assigned successfully",
+                                "पेंटर सफलतापूर्वक असाइन हुआ"
                             )
-                            workerEmail = ""
-                            loading = false
-                            currentUser?.let {
-                                loadBookings(it.uid, "admin")
-                            }
+                            currentUser?.let { loadBookings(it, "admin") }
                         }
-                        .addOnFailureListener {
-                            message = it.message ?: "Assignment failed"
+                        .addOnFailureListener { e ->
                             loading = false
+                            message = e.message ?: "Assignment failed"
                         }
                 }
             }
-            .addOnFailureListener {
-                message = it.message ?: "Painter search failed"
+            .addOnFailureListener { e ->
                 loading = false
+                message = e.message ?: "Painter search failed"
             }
     }
 
-    fun logout() {
-        auth.signOut()
-        currentUser = null
-        userRole = ""
-        bookings = emptyList()
-        screen = "home"
-        registering = false
-        email = ""
-        password = ""
-        message = tr("Logged out", "लॉगआउट हो गया")
-    }
+    fun updateBookingStatus(row: BookingRow, newStatus: String) {
+        val user = currentUser ?: return
+        loading = true
 
-    LaunchedEffect(Unit) {
-        auth.currentUser?.let { openAccount(it) }
+        db.collection("bookings").document(row.id)
+            .update("status", newStatus)
+            .addOnSuccessListener {
+                loading = false
+                message = tr(
+                    "Booking status updated",
+                    "बुकिंग की स्थिति अपडेट हुई"
+                )
+                loadBookings(user, userRole)
+            }
+            .addOnFailureListener { e ->
+                loading = false
+                message = e.message ?: "Update failed"
+            }
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text(
-            "KaamSetu – Paint & P.O.P",
-            style = MaterialTheme.typography.headlineMedium
-        )
-
-        Text(
-            tr(
-                "Jammu & Kashmir Painting and P.O.P Services",
-                "जम्मू और कश्मीर पेंटिंग और P.O.P सेवाएं"
-            )
-        )
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { hindi = true }) {
-                Text("हिंदी")
-            }
-            OutlinedButton(onClick = { hindi = false }) {
-                Text("English")
-            }
-        }
-
-        HorizontalDivider()
-
-        if (currentUser == null) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
             Text(
-                tr("Welcome to KaamSetu", "KaamSetu में आपका स्वागत है"),
+                "KaamSetu – Paint & P.O.P",
                 style = MaterialTheme.typography.titleLarge
             )
 
-            if (registering) {
-                Text(tr("Create account", "अकाउंट बनाएं"))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = { selectedRole = "customer" },
-                        enabled = selectedRole != "customer"
-                    ) { Text(tr("Customer", "ग्राहक")) }
+            TextButton(onClick = { hindi = !hindi }) {
+                Text(if (hindi) "English" else "हिंदी")
+            }
+        }
 
-                    Button(
-                        onClick = { selectedRole = "worker" },
-                        enabled = selectedRole != "worker"
-                    ) { Text(tr("Painter", "पेंटर")) }
-                }
+        if (message.isNotBlank()) {
+            Text(message, color = MaterialTheme.colorScheme.primary)
+        }
 
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text(tr("Full name", "पूरा नाम")) },
-                    modifier = Modifier.fillMaxWidth()
+        if (loading) {
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
+
+        if (screen == "auth") {
+            Text(
+                tr(
+                    "Connect customers with painters across Jammu & Kashmir",
+                    "जम्मू-कश्मीर में ग्राहकों और पेंटरों को जोड़ें"
                 )
+            )
 
-                OutlinedTextField(
-                    value = phone,
-                    onValueChange = {
-                        if (it.length <= 10 && it.all(Char::isDigit)) phone = it
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = selectedRole == "customer",
+                    onClick = {
+                        selectedRole = "customer"
+                        registering = false
                     },
-                    label = { Text(tr("10-digit mobile number", "10 अंकों का मोबाइल नंबर")) },
-                    modifier = Modifier.fillMaxWidth()
+                    label = { Text(tr("Customer", "ग्राहक")) }
                 )
-            } else {
-                Text(tr("Login", "लॉगिन"), style = MaterialTheme.typography.titleLarge)
-                Text(
-                    tr(
-                        "Customer and Painter use their registered email and password. Admin uses an authorized admin account.",
-                        "ग्राहक और पेंटर अपने रजिस्टर्ड Email और Password से लॉगिन करें। एडमिन अधिकृत अकाउंट से लॉगिन करेगा।"
-                    )
+
+                FilterChip(
+                    selected = selectedRole == "worker",
+                    onClick = {
+                        selectedRole = "worker"
+                        registering = false
+                    },
+                    label = { Text(tr("Painter / Worker", "पेंटर / कारीगर")) }
                 )
             }
 
             OutlinedTextField(
                 value = email,
                 onValueChange = { email = it },
-                label = { Text("Email") },
+                label = { Text(tr("Email", "ईमेल")) },
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -433,288 +453,343 @@ fun KaamSetuApp() {
                 modifier = Modifier.fillMaxWidth()
             )
 
-            Button(
-                onClick = { if (registering) register() else login() },
-                enabled = !loading,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    if (loading) tr("Please wait...", "कृपया इंतजार करें...")
-                    else if (registering) tr("Register", "रजिस्टर करें")
-                    else tr("Login", "लॉगिन करें")
-                )
-            }
-
-            TextButton(onClick = {
-                registering = !registering
-                message = ""
-            }) {
-                Text(
-                    if (registering)
-                        tr("Already registered? Login", "पहले से अकाउंट है? लॉगिन करें")
-                    else
-                        tr("New Customer / Painter? Register", "नए ग्राहक / पेंटर? रजिस्टर करें")
-                )
-            }
-        } else {
-            Text(
-                when (userRole) {
-                    "customer" -> tr("CUSTOMER PANEL", "ग्राहक पैनल")
-                    "worker" -> tr("PAINTER PANEL", "पेंटर पैनल")
-                    else -> tr("ADMIN PANEL", "एडमिन पैनल")
-                },
-                style = MaterialTheme.typography.titleLarge
-            )
-
-            Text(
-                tr("Welcome", "स्वागत है") + " $name"
-            )
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = {
-                    screen = "home"
-                    currentUser?.let { loadBookings(it.uid, userRole) }
-                }) {
-                    Text(tr("Home", "होम"))
-                }
-
-                OutlinedButton(onClick = { logout() }) {
-                    Text(tr("Logout", "लॉगआउट"))
-                }
-            }
-
-            if (userRole == "customer") {
-                Button(
-                    onClick = { screen = "newBooking" },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(tr("New Booking", "नई बुकिंग"))
-                }
-
-                Button(
-                    onClick = {
-                        screen = "myBookings"
-                        currentUser?.let { loadBookings(it.uid, "customer") }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(tr("My Bookings", "मेरी बुकिंग"))
-                }
-            }
-
-            if (userRole == "worker") {
-                Button(
-                    onClick = {
-                        screen = "myBookings"
-                        currentUser?.let { loadBookings(it.uid, "worker") }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(tr("My Assigned Jobs", "मुझे दिए गए काम"))
-                }
-            }
-
-            if (userRole == "admin") {
-                Button(
-                    onClick = {
-                        screen = "adminBookings"
-                        currentUser?.let { loadBookings(it.uid, "admin") }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(tr("All Customer Bookings", "सभी ग्राहकों की बुकिंग"))
-                }
-            }
-
-            if (screen == "newBooking" && userRole == "customer") {
-                HorizontalDivider()
-                Text(
-                    tr("Customer Booking Form", "ग्राहक बुकिंग फॉर्म"),
-                    style = MaterialTheme.typography.titleLarge
-                )
-
+            if (registering) {
                 OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text(tr("Customer Name", "ग्राहक का नाम")) },
+                    value = fullName,
+                    onValueChange = { fullName = it },
+                    label = { Text(tr("Full name", "पूरा नाम")) },
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 OutlinedTextField(
                     value = phone,
-                    onValueChange = {
-                        if (it.length <= 10 && it.all(Char::isDigit)) phone = it
-                    },
-                    label = { Text(tr("Mobile Number", "मोबाइल नंबर")) },
+                    onValueChange = { phone = it },
+                    label = { Text(tr("Mobile number", "मोबाइल नंबर")) },
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Text(tr("Select District", "जिला चुनें"))
-                districts.forEach { d ->
-                    Row {
-                        RadioButton(
-                            selected = district == d,
-                            onClick = { district = d }
-                        )
-                        Text(d, modifier = Modifier.padding(top = 12.dp))
-                    }
-                }
-
-                Text(tr("Work Category", "काम का प्रकार"))
-                listOf("Painting", "P.O.P", "Putty", "Polish").forEach { item ->
-                    Row {
-                        RadioButton(
-                            selected = category == item,
-                            onClick = { category = item }
-                        )
-                        Text(item, modifier = Modifier.padding(top = 12.dp))
-                    }
-                }
+                DistrictPicker(district, { district = it }, hindi)
 
                 OutlinedTextField(
                     value = address,
                     onValueChange = { address = it },
-                    label = { Text(tr("Complete Work Address", "काम का पूरा पता")) },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 2
+                    label = { Text(tr("Full address", "पूरा पता")) },
+                    modifier = Modifier.fillMaxWidth()
                 )
+
+                Button(
+                    onClick = { register() },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !loading
+                ) {
+                    Text(tr("Submit Registration", "रजिस्ट्रेशन जमा करें"))
+                }
+
+                TextButton(onClick = { registering = false }) {
+                    Text(tr("Back to Login", "लॉगिन पर वापस जाएँ"))
+                }
+            } else {
+                Button(
+                    onClick = { signIn(selectedRole) },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !loading
+                ) {
+                    Text(tr("Login", "लॉगिन"))
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        registering = true
+                        message = ""
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        tr(
+                            "Create Customer / Painter Account",
+                            "ग्राहक / पेंटर अकाउंट बनाएँ"
+                        )
+                    )
+                }
+            }
+
+            Divider()
+
+            Text(
+                tr("Admin access", "एडमिन लॉगिन"),
+                style = MaterialTheme.typography.titleMedium
+            )
+
+            OutlinedButton(
+                onClick = { signIn("admin") },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !loading
+            ) {
+                Text(tr("Admin Login", "एडमिन लॉगिन"))
+            }
+
+            Text(
+                tr(
+                    "Admin login requires the Firebase custom claim: admin = true.",
+                    "एडमिन लॉगिन के लिए Firebase में admin = true कस्टम क्लेम जरूरी है।"
+                ),
+                style = MaterialTheme.typography.bodySmall
+            )
+        } else {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        when (userRole) {
+                            "admin" -> tr("Admin Dashboard", "एडमिन डैशबोर्ड")
+                            "worker" -> tr("Painter Dashboard", "पेंटर डैशबोर्ड")
+                            else -> tr("Customer Dashboard", "ग्राहक डैशबोर्ड")
+                        },
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                    Text(userName)
+                }
+
+                TextButton(onClick = {
+                    auth.signOut()
+                    currentUser = null
+                    userRole = ""
+                    bookings = emptyList()
+                    screen = "auth"
+                    message = tr("Logged out", "लॉगआउट हो गया")
+                }) {
+                    Text(tr("Logout", "लॉगआउट"))
+                }
+            }
+
+            if (userRole == "customer") {
+                Text(
+                    tr("New Work Booking", "नया काम बुक करें"),
+                    style = MaterialTheme.typography.titleMedium
+                )
+
+                OutlinedTextField(
+                    value = fullName,
+                    onValueChange = { fullName = it },
+                    label = { Text(tr("Customer name", "ग्राहक का नाम")) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = phone,
+                    onValueChange = { phone = it },
+                    label = { Text(tr("Mobile number", "मोबाइल नंबर")) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                DistrictPicker(district, { district = it }, hindi)
+
+                OutlinedTextField(
+                    value = address,
+                    onValueChange = { address = it },
+                    label = { Text(tr("Complete work address", "काम का पूरा पता")) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Text(tr("Work category", "काम का प्रकार"))
+
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("Painting", "P.O.P", "Putty", "Polish").forEach { item ->
+                        FilterChip(
+                            selected = category == item,
+                            onClick = { category = item },
+                            label = { Text(item) }
+                        )
+                    }
+                }
 
                 OutlinedTextField(
                     value = details,
                     onValueChange = { details = it },
-                    label = { Text(tr("Work Details", "काम की जानकारी")) },
+                    label = { Text(tr("Work details", "काम की जानकारी")) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 3
                 )
 
                 Button(
-                    onClick = { saveBooking() },
-                    enabled = !loading,
-                    modifier = Modifier.fillMaxWidth()
+                    onClick = { createBooking() },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !loading
                 ) {
                     Text(tr("Submit Booking", "बुकिंग जमा करें"))
                 }
-            }
 
-            if (screen == "myBookings" || screen == "adminBookings") {
-                HorizontalDivider()
                 Text(
-                    tr("Booking Details", "बुकिंग की जानकारी"),
-                    style = MaterialTheme.typography.titleLarge
+                    tr("My Bookings", "मेरी बुकिंग"),
+                    style = MaterialTheme.typography.titleMedium
                 )
 
-                if (bookings.isEmpty()) {
-                    Text(tr("No bookings found", "अभी कोई बुकिंग नहीं मिली"))
+                BookingList(bookings, hindi, false, ::updateBookingStatus)
+
+            } else if (userRole == "worker") {
+                Text(
+                    tr("Your assigned jobs", "आपको दिए गए काम"),
+                    style = MaterialTheme.typography.titleMedium
+                )
+
+                BookingList(bookings, hindi, true, ::updateBookingStatus)
+
+            } else {
+                Text(
+                    tr("All customer bookings", "सभी ग्राहक बुकिंग"),
+                    style = MaterialTheme.typography.titleMedium
+                )
+
+                Text(
+                    tr(
+                        "Commission rate: 10% per completed job (collected directly)",
+                        "कमीशन: हर पूरे काम पर 10% (सीधे वसूलें)"
+                    )
+                )
+
+                bookings.forEach { row ->
+                    BookingCard(row, hindi)
+
+                    OutlinedTextField(
+                        value = workerEmail,
+                        onValueChange = { workerEmail = it },
+                        label = {
+                            Text(
+                                tr(
+                                    "Painter registered email",
+                                    "पेंटर का रजिस्टर्ड ईमेल"
+                                )
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Button(
+                        onClick = { assignWorker(row) },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !loading
+                    ) {
+                        Text(tr("Assign Painter", "पेंटर असाइन करें"))
+                    }
+
+                    Divider()
+                }
+            }
+
+            OutlinedButton(
+                onClick = {
+                    currentUser?.let { loadBookings(it, userRole) }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(tr("Refresh", "रिफ्रेश"))
+            }
+        }
+    }
+}
+
+@Composable
+private fun DistrictPicker(
+    value: String,
+    onSelect: (String) -> Unit,
+    hindi: Boolean
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Column {
+        Text(if (hindi) "जिला" else "District")
+
+        Box {
+            OutlinedButton(
+                onClick = { expanded = true },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(value)
+            }
+
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                districts.forEach { item ->
+                    DropdownMenuItem(
+                        text = { Text(item) },
+                        onClick = {
+                            onSelect(item)
+                            expanded = false
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BookingCard(row: BookingRow, hindi: Boolean) {
+    val b = row.booking
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(
+            Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text("${if (hindi) "ग्राहक" else "Customer"}: ${b.customerName}")
+            Text("${if (hindi) "मोबाइल" else "Phone"}: ${b.phone}")
+            Text("${if (hindi) "जिला" else "District"}: ${b.district}")
+            Text("${if (hindi) "पता" else "Address"}: ${b.address}")
+            Text("${if (hindi) "काम" else "Work"}: ${b.category}")
+            Text("${if (hindi) "विवरण" else "Details"}: ${b.details}")
+            Text("${if (hindi) "स्थिति" else "Status"}: ${b.status}")
+
+            if (b.assignedWorkerEmail.isNotBlank()) {
+                Text(
+                    "${if (hindi) "पेंटर" else "Painter"}: ${b.assignedWorkerEmail}"
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BookingList(
+    rows: List<BookingRow>,
+    hindi: Boolean,
+    workerActions: Boolean,
+    onStatus: (BookingRow, String) -> Unit
+) {
+    if (rows.isEmpty()) {
+        Text(if (hindi) "अभी कोई बुकिंग नहीं है।" else "No bookings yet.")
+    }
+
+    rows.forEach { row ->
+        BookingCard(row, hindi)
+
+        if (workerActions) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = {
+                    onStatus(row, "Accepted")
+                }) {
+                    Text(if (hindi) "स्वीकार" else "Accept")
                 }
 
-                bookings.forEach { (id, booking) ->
-                    Card(
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(
-                                "${tr("Customer", "ग्राहक")}: ${booking.customerName}",
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text("${tr("Phone", "मोबाइल")}: ${booking.phone}")
-                            Text("${tr("District", "जिला")}: ${booking.district}")
-                            Text("${tr("Address", "पता")}: ${booking.address}")
-                            Text("${tr("Category", "काम")}: ${booking.category}")
-                            Text("${tr("Details", "विवरण")}: ${booking.details}")
-                            Text("${tr("Status", "स्थिति")}: ${booking.status}")
+                OutlinedButton(onClick = {
+                    onStatus(row, "Rejected")
+                }) {
+                    Text(if (hindi) "रिजेक्ट" else "Reject")
+                }
 
-                            if (booking.assignedWorkerEmail.isNotBlank()) {
-                                Text(
-                                    "${tr("Painter", "पेंटर")}: ${booking.assignedWorkerEmail}"
-                                )
-                            }
-
-                            if (userRole == "admin") {
-                                OutlinedTextField(
-                                    value = workerEmail,
-                                    onValueChange = { workerEmail = it },
-                                    label = { Text(tr("Painter Email", "पेंटर का Email")) },
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-
-                                Button(
-                                    onClick = { assignWorker(id) },
-                                    enabled = !loading,
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(tr("Assign Painter", "पेंटर को काम दें"))
-                                }
-
-                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    OutlinedButton(onClick = {
-                                        updateStatus(id, "In Progress")
-                                    }) {
-                                        Text(tr("In Progress", "काम जारी"))
-                                    }
-                                    OutlinedButton(onClick = {
-                                        updateStatus(id, "Completed")
-                                    }) {
-                                        Text(tr("Completed", "पूरा हुआ"))
-                                    }
-                                }
-                            }
-
-                            if (userRole == "worker") {
-                                if (booking.status == "Assigned") {
-                                    Button(
-                                        onClick = {
-                                            updateStatus(id, "Accepted")
-                                        },
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text(tr("Accept Job", "काम स्वीकार करें"))
-                                    }
-                                }
-
-                                if (booking.status == "Accepted" ||
-                                    booking.status == "In Progress"
-                                ) {
-                                    Button(
-                                        onClick = {
-                                            updateStatus(id, "In Progress")
-                                        },
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text(tr("Start Work", "काम शुरू करें"))
-                                    }
-
-                                    Button(
-                                        onClick = {
-                                            updateStatus(id, "Completed")
-                                        },
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text(tr("Complete Work", "काम पूरा करें"))
-                                    }
-                                }
-                            }
-                        }
-                    }
+                Button(onClick = {
+                    onStatus(row, "Completed")
+                }) {
+                    Text(if (hindi) "पूरा हुआ" else "Complete")
                 }
             }
         }
 
-        if (message.isNotBlank()) {
-            HorizontalDivider()
-            Text(message, color = MaterialTheme.colorScheme.primary)
-        }
-
-        if (loading) {
-            CircularProgressIndicator()
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-        Text(
-            "KaamSetu – Paint & P.O.P",
-            style = MaterialTheme.typography.bodySmall
-        )
+        Divider()
     }
 }
+             
