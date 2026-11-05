@@ -1,45 +1,20 @@
-
 set -euo pipefail
 
-# ==========================================
-# KAAMSETU – PAINT & P.O.P
-# COMPLETE FRESH SOURCE RESTORE + REPAIR
-# ==========================================
+cd "$(git rev-parse --show-toplevel)"
 
-ROOT="$(git rev-parse --show-toplevel)"
-cd "$ROOT"
+echo "===== KAAMSETU COMPLETE SOURCE REPAIR ====="
 
-echo "KaamSetu project folder:"
-pwd
+# जरूरी फाइलें जाँचें
+test -f MainActivity_old.kt
+test -f app/build.gradle.kts
+test -f app/AndroidManifest.xml
+test -f app/google-services.json
+test -f .github/workflows/build.yml
 
-# जरूरी फाइलों की जाँच
-test -f "MainActivity_old.kt" || {
-  echo "ERROR: MainActivity_old.kt नहीं मिली।"
-  exit 1
-}
-
-test -f "app/build.gradle.kts" || {
-  echo "ERROR: app/build.gradle.kts नहीं मिली।"
-  exit 1
-}
-
-test -f "app/AndroidManifest.xml" || {
-  echo "ERROR: AndroidManifest.xml नहीं मिली।"
-  exit 1
-}
-
-test -f "app/google-services.json" || {
-  echo "ERROR: Firebase google-services.json नहीं मिली।"
-  exit 1
-}
-
-# STEP 1: असली Kotlin फाइल वापस रखें
-mkdir -p app
+# असली Kotlin ऐप को सही जगह रखें
+mkdir -p app/src/main/java/com/kaamsetu/app
 cp MainActivity_old.kt app/MainActivity_KaamSetu_Fresh.kt
 
-echo "STEP 1 OK: असली Kotlin source वापस रख दिया गया।"
-
-# STEP 2: तीनों सुधार लगाएँ
 python3 - <<'PY'
 from pathlib import Path
 import sys
@@ -47,18 +22,16 @@ import sys
 p = Path("app/MainActivity_KaamSetu_Fresh.kt")
 s = p.read_text(encoding="utf-8")
 
-def replace_once(old, new, name):
+def patch(old, new, name):
     global s
     count = s.count(old)
     if count != 1:
-        sys.exit(
-            f"ERROR: {name} का सही हिस्सा नहीं मिला। "
-            f"मिले: {count}. फाइल सुरक्षित रखी गई।"
-        )
+        sys.exit(f"ERROR: {name}: expected 1 match, found {count}. No patched file saved.")
     s = s.replace(old, new, 1)
+    print("OK:", name)
 
-# सुधार 1: Registration success dialog की state
-replace_once(
+# 1. Registration success dialog state
+patch(
 '''    var registering by remember {
         mutableStateOf(false)
     }
@@ -76,9 +49,8 @@ replace_once(
 "Registration dialog state"
 )
 
-# सुधार 2: Registration के बाद अपने आप login नहीं होगा।
-# Firebase में अकाउंट सेव होगा, logout होगा और OK वाला dialog दिखेगा।
-replace_once(
+# 2. Registration के बाद automatic login बंद
+patch(
 '''                        loading = false
 
                         message = tr(
@@ -103,12 +75,11 @@ replace_once(
                         screen = "auth"
                         message = ""
                         showRegistrationSuccessDialog = true''',
-"Registration success callback"
+"Registration callback"
 )
 
-# सुधार 3A: Painter profile update के बाद
-# सभी बदली हुई जानकारी स्क्रीन पर भी अपडेट होगी।
-replace_once(
+# 3. Painter profile update पर UI state भी अपडेट
+patch(
 '''                loading = false
                 userName = fullName.trim()
 
@@ -126,9 +97,8 @@ replace_once(
 "Painter profile update callback"
 )
 
-# सुधार 3B: अगर profile document मौजूद नहीं है,
-# तब नया document सेव होने पर भी वही state update होगी।
-replace_once(
+# 4. Painter profile create callback पर भी UI state अपडेट
+patch(
 '''                        loading = false
                         userName = fullName.trim()
 
@@ -146,8 +116,8 @@ replace_once(
 "Painter profile create callback"
 )
 
-# सुधार 4: Booking सेव होते ही My Bookings में दिखेगी।
-replace_once(
+# 5. Booking save होते ही My Bookings में तुरंत दिखे
+patch(
 '''        db.collection("bookings")
             .add(booking)
             .addOnSuccessListener {
@@ -163,8 +133,8 @@ replace_once(
 "Immediate My Bookings update"
 )
 
-# Registration success dialog को स्क्रीन में जोड़ें।
-replace_once(
+# 6. Registration success dialog UI
+patch(
 '''        }
     }
 }
@@ -179,20 +149,13 @@ replace_once(
                 showRegistrationSuccessDialog = false
             },
             title = {
-                Text(
-                    tr(
-                        "Registration Successful",
-                        "रजिस्ट्रेशन सफल"
-                    )
-                )
+                Text(tr("Registration Successful", "रजिस्ट्रेशन सफल"))
             },
             text = {
-                Text(
-                    tr(
-                        "Your account has been created successfully. Please press OK and log in when you are ready.",
-                        "आपका अकाउंट सफलतापूर्वक बन गया है। OK दबाएँ और जब चाहें खुद लॉगिन करें।"
-                    )
-                )
+                Text(tr(
+                    "Your account has been created successfully. Please press OK and log in when you are ready.",
+                    "आपका अकाउंट सफलतापूर्वक बन गया है। OK दबाएँ और जब चाहें खुद लॉगिन करें।"
+                ))
             },
             confirmButton = {
                 TextButton(
@@ -211,78 +174,65 @@ replace_once(
 "Registration success dialog UI"
 )
 
-# सुरक्षा जाँच: फोटो अपलोड दोबारा नहीं आना चाहिए।
-for forbidden in (
-    "FirebaseStorage",
-    "photoPicker",
-    "bookingPhotos"
-):
-    if forbidden in s:
-        sys.exit(
-            f"ERROR: हटाया गया फोटो कोड वापस मिला: {forbidden}"
-        )
+# फोटो अपलोड हटाया हुआ ही रहे
+for word in ["FirebaseStorage", "photoPicker", "bookingPhotos"]:
+    if word in s:
+        sys.exit("ERROR: Removed photo feature found: " + word)
 
-# सभी सुधारों की जाँच
-if "BookingRow(document.id, booking)" not in s:
-    sys.exit("ERROR: My Bookings update नहीं मिला।")
+# जरूरी फीचर सत्यापन
+checks = {
+    "Email/password registration": "createUserWithEmailAndPassword",
+    "Email/password login": "signInWithEmailAndPassword",
+    "Admin permission claim": 'token.claims["admin"]',
+    "Painter assignment": "fun assignWorker",
+    "Customer booking": "fun createBooking",
+    "Customer booking list": "My Bookings",
+    "Registration dialog": "showRegistrationSuccessDialog",
+    "Instant booking refresh": "BookingRow(document.id, booking)"
+}
+
+for name, needle in checks.items():
+    if needle not in s:
+        sys.exit("ERROR: Missing required feature: " + name)
+    print("VERIFIED:", name)
 
 if s.count("painterExperience = painterExperience.trim()") != 2:
-    sys.exit("ERROR: Painter profile के दोनों callbacks verify नहीं हुए।")
-
-if "showRegistrationSuccessDialog = true" not in s:
-    sys.exit("ERROR: Registration dialog callback verify नहीं हुआ।")
-
-if "Your account has been created successfully." not in s:
-    sys.exit("ERROR: Registration dialog का message नहीं मिला।")
+    sys.exit("ERROR: Both painter profile callbacks were not patched.")
 
 p.write_text(s, encoding="utf-8")
-
-print("STEP 2 OK: सभी सुधार सेव हो गए।")
-print("नई Kotlin file lines:", len(s.splitlines()))
-print("Photo upload: REMOVED")
-print("Registration dialog: OK")
-print("Painter profile callbacks: OK")
-print("Immediate My Bookings update: OK")
+print("SUCCESS: Kotlin source repaired.")
+print("Kotlin lines:", len(s.splitlines()))
 PY
 
-# STEP 3: Kotlin source की बुनियादी जाँच
-grep -q "package com.kaamsetu.app" \
+# Workflow द्वारा इस्तेमाल होने वाली Kotlin फाइल को सही जगह भी रखें
+cp app/MainActivity_KaamSetu_Fresh.kt \
+  app/src/main/java/com/kaamsetu/app/MainActivity.kt
+
+# गलत Bash-script वाली Kotlin फाइल अब असली Kotlin source है
+grep -q '^package com.kaamsetu.app' \
   app/MainActivity_KaamSetu_Fresh.kt
 
-grep -q "createUserWithEmailAndPassword" \
+grep -q 'fun assignWorker' \
   app/MainActivity_KaamSetu_Fresh.kt
 
-grep -q "signInWithEmailAndPassword" \
+grep -q 'fun createBooking' \
   app/MainActivity_KaamSetu_Fresh.kt
 
-grep -q "My Bookings" \
+grep -q 'showRegistrationSuccessDialog' \
   app/MainActivity_KaamSetu_Fresh.kt
 
-grep -q "showRegistrationSuccessDialog" \
-  app/MainActivity_KaamSetu_Fresh.kt
-
-echo "STEP 3 OK: Source verification complete."
-
-# STEP 4: Git changes की जाँच
 git diff --check
 
-# STEP 5: GitHub पर नया source भेजें
+echo "===== SOURCE CHECK PASSED ====="
+
+# दोनों source files GitHub पर भेजें
 git add app/MainActivity_KaamSetu_Fresh.kt
 
-git commit -m "Restore fresh KaamSetu Kotlin source and fix registration, profile and bookings"
+git commit -m "Restore KaamSetu Kotlin source and apply registration profile booking fixes"
 
 git push origin HEAD:main
 
-echo ""
-echo "=========================================="
-echo "KAAMSETU SOURCE REPAIR PUSHED"
-echo "=========================================="
-echo "अब GitHub Actions में APK build शुरू होना चाहिए।"
-echo "यह APK तैयार होने की पुष्टि नहीं है।"
-echo "Build सफल होने के बाद ही APK डाउनलोड करें।"
-echo ""
-echo "Actions खोलें:"
+echo "===== PUSH COMPLETED ====="
+echo "अब GitHub Actions में नया APK build देखें:"
 echo "https://github.com/mdjulfakar/KaamSetu-Paint-POP-D/actions"
-
-
 
