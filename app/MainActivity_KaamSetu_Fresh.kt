@@ -1,160 +1,288 @@
 
+set -euo pipefail
 
-set -e
+# ==========================================
+# KAAMSETU – PAINT & P.O.P
+# COMPLETE FRESH SOURCE RESTORE + REPAIR
+# ==========================================
 
-# KaamSetu – complete fresh repair and build
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
+echo "KaamSetu project folder:"
+pwd
+
+# जरूरी फाइलों की जाँच
+test -f "MainActivity_old.kt" || {
+  echo "ERROR: MainActivity_old.kt नहीं मिली।"
+  exit 1
+}
+
+test -f "app/build.gradle.kts" || {
+  echo "ERROR: app/build.gradle.kts नहीं मिली।"
+  exit 1
+}
+
+test -f "app/AndroidManifest.xml" || {
+  echo "ERROR: AndroidManifest.xml नहीं मिली।"
+  exit 1
+}
+
+test -f "app/google-services.json" || {
+  echo "ERROR: Firebase google-services.json नहीं मिली।"
+  exit 1
+}
+
+# STEP 1: असली Kotlin फाइल वापस रखें
+mkdir -p app
+cp MainActivity_old.kt app/MainActivity_KaamSetu_Fresh.kt
+
+echo "STEP 1 OK: असली Kotlin source वापस रख दिया गया।"
+
+# STEP 2: तीनों सुधार लगाएँ
 python3 - <<'PY'
 from pathlib import Path
-import re, sys
+import sys
 
 p = Path("app/MainActivity_KaamSetu_Fresh.kt")
-if not p.exists():
-    sys.exit("ERROR: MainActivity_KaamSetu_Fresh.kt नहीं मिली। सही project folder खोलें।")
-
 s = p.read_text(encoding="utf-8")
-original_lines = len(s.splitlines())
-print("पुरानी Kotlin lines:", original_lines)
 
-# 1. Registration success dialog state: remove broken extra braces
-old = '''var showRegistrationSuccessDialog by remember {
-    mutableStateOf(false)
-}
-    mutableStateOf(false)
-}'''
-new = '''var showRegistrationSuccessDialog by remember {
-    mutableStateOf(false)
-}'''
-if old in s:
+def replace_once(old, new, name):
+    global s
+    count = s.count(old)
+    if count != 1:
+        sys.exit(
+            f"ERROR: {name} का सही हिस्सा नहीं मिला। "
+            f"मिले: {count}. फाइल सुरक्षित रखी गई।"
+        )
     s = s.replace(old, new, 1)
-else:
-    print("NOTE: Registration state पहले से बदली हुई है या pattern अलग है।")
 
-# 2. Repair the malformed Firestore registration success callback
-pattern = r'(\\.set\\(profile\\)\\s*\\.addOnSuccessListener\\s*\\{).*?(\\s*\\.addOnFailureListener \\{ e ->)'
-replacement = r'''\1
+# सुधार 1: Registration success dialog की state
+replace_once(
+'''    var registering by remember {
+        mutableStateOf(false)
+    }
+
+    var currentUser by remember {''',
+'''    var registering by remember {
+        mutableStateOf(false)
+    }
+
+    var showRegistrationSuccessDialog by remember {
+        mutableStateOf(false)
+    }
+
+    var currentUser by remember {''',
+"Registration dialog state"
+)
+
+# सुधार 2: Registration के बाद अपने आप login नहीं होगा।
+# Firebase में अकाउंट सेव होगा, logout होगा और OK वाला dialog दिखेगा।
+replace_once(
+'''                        loading = false
+
+                        message = tr(
+                            "Successfully Submitted! Please log in.",
+                            "सफलतापूर्वक जमा हुआ! अब लॉगिन करें।"
+                        )
+
+                        registering = false
+                        password = ""
+
+                        auth.signOut()
+                        currentUser = null''',
+'''                        loading = false
+                        registering = false
+                        password = ""
+
                         auth.signOut()
                         currentUser = null
                         userRole = ""
                         userName = ""
                         bookings = emptyList()
-
-                        loading = false
-                        registering = false
-                        password = ""
                         screen = "auth"
                         message = ""
+                        showRegistrationSuccessDialog = true''',
+"Registration success callback"
+)
 
-                        showRegistrationSuccessDialog = true
-                    }
-\2'''
-s, count = re.subn(pattern, replacement, s, count=1, flags=re.S)
-if count != 1:
-    sys.exit("ERROR: Registration callback सुरक्षित तरीके से ठीक नहीं हुआ। फाइल नहीं बदली गई।")
-
-# 3. Painter profile: update all visible profile fields after save
-old_profile = '''loading = false
-                        userName = fullName.trim()'''
-new_profile = '''loading = false
-                        userName = fullName.trim()
-                        fullName = fullName.trim()
-                        phone = phone.trim()
-                        address = address.trim()
-                        painterSkills = painterSkills.trim()
-                        painterExperience = painterExperience.trim()'''
-s, profile_count = s.replace(old_profile, new_profile), s.count(old_profile)
-# Apply to both update() and fallback set() success callbacks
-# (The replacement above is idempotent; verify both are present.)
-if s.count("painterExperience = painterExperience.trim()") < 2:
-    # Try the original indentation variant for the second callback
-    old_profile2 = '''loading = false
-                userName = fullName.trim()'''
-    new_profile2 = '''loading = false
+# सुधार 3A: Painter profile update के बाद
+# सभी बदली हुई जानकारी स्क्रीन पर भी अपडेट होगी।
+replace_once(
+'''                loading = false
                 userName = fullName.trim()
-                fullName = fullName.trim()
+
+                message = tr(
+                    "Painter profile saved successfully!",''',
+'''                loading = false
+                userName = fullName.trim()
                 phone = phone.trim()
                 address = address.trim()
                 painterSkills = painterSkills.trim()
-                painterExperience = painterExperience.trim()'''
-    s = s.replace(old_profile2, new_profile2, 1)
+                painterExperience = painterExperience.trim()
 
-# 4. Immediately show the newly created booking in My Bookings
-old_booking = '''.addOnSuccessListener { document ->
-                loading = false
-                message = tr('''
-new_booking = '''.addOnSuccessListener { document ->
-                loading = false
-                bookings = listOf(BookingRow(document.id, booking)) +
-                    bookings.filterNot { it.id == document.id }
-                message = tr('''
-if old_booking in s:
-    s = s.replace(old_booking, new_booking, 1)
-elif "BookingRow(document.id, booking)" not in s:
-    sys.exit("ERROR: Booking success block नहीं मिला।")
-
-# 5. Fix the extra opening brace in registration success dialog
-s = s.replace(
-    "if (showRegistrationSuccessDialog) { {",
-    "if (showRegistrationSuccessDialog) {",
-    1
+                message = tr(
+                    "Painter profile saved successfully!",''',
+"Painter profile update callback"
 )
 
-# Do not write a partial/failed patch
-if "mutableStateOf(false)\n}\n    mutableStateOf(false)" in s:
-    sys.exit("ERROR: Extra state braces अभी भी मौजूद हैं।")
-if "if (showRegistrationSuccessDialog) { {" in s:
-    sys.exit("ERROR: Dialog extra brace अभी भी मौजूद है।")
+# सुधार 3B: अगर profile document मौजूद नहीं है,
+# तब नया document सेव होने पर भी वही state update होगी।
+replace_once(
+'''                        loading = false
+                        userName = fullName.trim()
+
+                        message = tr(
+                            "Painter profile saved successfully!",''',
+'''                        loading = false
+                        userName = fullName.trim()
+                        phone = phone.trim()
+                        address = address.trim()
+                        painterSkills = painterSkills.trim()
+                        painterExperience = painterExperience.trim()
+
+                        message = tr(
+                            "Painter profile saved successfully!",''',
+"Painter profile create callback"
+)
+
+# सुधार 4: Booking सेव होते ही My Bookings में दिखेगी।
+replace_once(
+'''        db.collection("bookings")
+            .add(booking)
+            .addOnSuccessListener {
+
+                loading = false''',
+'''        db.collection("bookings")
+            .add(booking)
+            .addOnSuccessListener { document ->
+
+                loading = false
+                bookings = listOf(BookingRow(document.id, booking)) +
+                    bookings.filterNot { it.id == document.id }''',
+"Immediate My Bookings update"
+)
+
+# Registration success dialog को स्क्रीन में जोड़ें।
+replace_once(
+'''        }
+    }
+}
+
+// District selection''',
+'''        }
+    }
+
+    if (showRegistrationSuccessDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showRegistrationSuccessDialog = false
+            },
+            title = {
+                Text(
+                    tr(
+                        "Registration Successful",
+                        "रजिस्ट्रेशन सफल"
+                    )
+                )
+            },
+            text = {
+                Text(
+                    tr(
+                        "Your account has been created successfully. Please press OK and log in when you are ready.",
+                        "आपका अकाउंट सफलतापूर्वक बन गया है। OK दबाएँ और जब चाहें खुद लॉगिन करें।"
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showRegistrationSuccessDialog = false
+                    }
+                ) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+}
+
+// District selection''',
+"Registration success dialog UI"
+)
+
+# सुरक्षा जाँच: फोटो अपलोड दोबारा नहीं आना चाहिए।
+for forbidden in (
+    "FirebaseStorage",
+    "photoPicker",
+    "bookingPhotos"
+):
+    if forbidden in s:
+        sys.exit(
+            f"ERROR: हटाया गया फोटो कोड वापस मिला: {forbidden}"
+        )
+
+# सभी सुधारों की जाँच
+if "BookingRow(document.id, booking)" not in s:
+    sys.exit("ERROR: My Bookings update नहीं मिला।")
+
+if s.count("painterExperience = painterExperience.trim()") != 2:
+    sys.exit("ERROR: Painter profile के दोनों callbacks verify नहीं हुए।")
+
+if "showRegistrationSuccessDialog = true" not in s:
+    sys.exit("ERROR: Registration dialog callback verify नहीं हुआ।")
+
+if "Your account has been created successfully." not in s:
+    sys.exit("ERROR: Registration dialog का message नहीं मिला।")
 
 p.write_text(s, encoding="utf-8")
-print("सुधार सेव हुए। नई Kotlin lines:", len(s.splitlines()))
-print("पेंटर प्रोफाइल अपडेट:", s.count("painterExperience = painterExperience.trim()"))
-print("नई बुकिंग तुरंत सूची में:", "BookingRow(document.id, booking)" in s)
+
+print("STEP 2 OK: सभी सुधार सेव हो गए।")
+print("नई Kotlin file lines:", len(s.splitlines()))
+print("Photo upload: REMOVED")
+print("Registration dialog: OK")
+print("Painter profile callbacks: OK")
+print("Immediate My Bookings update: OK")
 PY
 
-# Build the APK
-echo "अब APK build शुरू हो रहा है..."
-if [ -f "./gradlew" ]; then
-  chmod +x ./gradlew
-  ./gradlew :app:assembleDebug
-else
-  echo "ERROR: Gradle wrapper ./gradlew नहीं मिला।"
-  exit 1
-fi
+# STEP 3: Kotlin source की बुनियादी जाँच
+grep -q "package com.kaamsetu.app" \
+  app/MainActivity_KaamSetu_Fresh.kt
 
-# Prepare complete fresh project ZIP and APK output
-mkdir -p KaamSetu-Fresh-Output
+grep -q "createUserWithEmailAndPassword" \
+  app/MainActivity_KaamSetu_Fresh.kt
 
-python3 - <<'PY'
-from pathlib import Path
-import zipfile, shutil, sys
+grep -q "signInWithEmailAndPassword" \
+  app/MainActivity_KaamSetu_Fresh.kt
 
-root = Path.cwd()
-out = root / "KaamSetu-Fresh-Output"
-zip_path = out / "KaamSetu-Fresh-Complete-Project.zip"
+grep -q "My Bookings" \
+  app/MainActivity_KaamSetu_Fresh.kt
 
-skip = {".git", ".gradle", "build", "KaamSetu-Fresh-Output"}
-with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
-    for f in root.rglob("*"):
-        if not f.is_file():
-            continue
-        rel = f.relative_to(root)
-        if any(part in skip for part in rel.parts):
-            continue
-        z.write(f, rel)
+grep -q "showRegistrationSuccessDialog" \
+  app/MainActivity_KaamSetu_Fresh.kt
 
-apk = root / "app/build/outputs/apk/debug/app-debug.apk"
-if not apk.exists():
-    sys.exit("ERROR: APK file नहीं मिली। ZIP बनी है, लेकिन APK build verify नहीं हुआ।")
+echo "STEP 3 OK: Source verification complete."
 
-shutil.copy2(apk, out / "KaamSetu-Fresh-Debug.apk")
-print("SUCCESS: पूरा Project ZIP:", zip_path)
-print("SUCCESS: APK:", out / "KaamSetu-Fresh-Debug.apk")
-PY
+# STEP 4: Git changes की जाँच
+git diff --check
 
-echo "काम पूरा। KaamSetu-Fresh-Output फोल्डर खोलें।"
+# STEP 5: GitHub पर नया source भेजें
+git add app/MainActivity_KaamSetu_Fresh.kt
 
+git commit -m "Restore fresh KaamSetu Kotlin source and fix registration, profile and bookings"
+
+git push origin HEAD:main
+
+echo ""
+echo "=========================================="
+echo "KAAMSETU SOURCE REPAIR PUSHED"
+echo "=========================================="
+echo "अब GitHub Actions में APK build शुरू होना चाहिए।"
+echo "यह APK तैयार होने की पुष्टि नहीं है।"
+echo "Build सफल होने के बाद ही APK डाउनलोड करें।"
+echo ""
+echo "Actions खोलें:"
+echo "https://github.com/mdjulfakar/KaamSetu-Paint-POP-D/actions"
 
 
 
