@@ -495,23 +495,82 @@ fun KaamSetuApp() {
                     enabled = !loading
                 ) {
                     Text(tr("Login", "लॉगिन"))
-                }
+                } else if (userRole == "worker") {
 
-                OutlinedButton(
-                    onClick = {
-                        registering = true
-                        message = ""
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        tr(
-                            "Create Customer / Painter Account",
-                            "ग्राहक / पेंटर अकाउंट बनाएँ"
-                        )
-                    )
-                }
-            }
+    Text(
+        tr("Painter Registration Form", "पेंटर रजिस्ट्रेशन फॉर्म"),
+        style = MaterialTheme.typography.titleLarge
+    )
+
+    Text(tr(
+        "Fill your work and contact details",
+        "अपनी काम और संपर्क की जानकारी भरें"
+    ))
+
+    OutlinedTextField(
+        value = fullName,
+        onValueChange = { fullName = it },
+        label = { Text(tr("Full Name", "पूरा नाम")) },
+        modifier = Modifier.fillMaxWidth()
+    )
+
+    OutlinedTextField(
+        value = phone,
+        onValueChange = { phone = it },
+        label = { Text(tr("Mobile Number", "मोबाइल नंबर")) },
+        modifier = Modifier.fillMaxWidth()
+    )
+
+    DistrictPicker(district, { district = it }, hindi)
+
+    OutlinedTextField(
+        value = address,
+        onValueChange = { address = it },
+        label = { Text(tr("Full Address", "पूरा पता")) },
+        modifier = Modifier.fillMaxWidth()
+    )
+
+    OutlinedTextField(
+        value = painterSkills,
+        onValueChange = { painterSkills = it },
+        label = {
+            Text(tr(
+                "Work Skills (Painting, P.O.P, Putty, Polish)",
+                "काम की जानकारी (पेंटिंग, पी.ओ.पी., पुट्टी, पॉलिश)"
+            ))
+        },
+        modifier = Modifier.fillMaxWidth(),
+        minLines = 2
+    )
+
+    OutlinedTextField(
+        value = painterExperience,
+        onValueChange = { painterExperience = it },
+        label = {
+            Text(tr(
+                "Work Experience (Years)",
+                "काम का अनुभव (साल)"
+            ))
+        },
+        modifier = Modifier.fillMaxWidth()
+    )
+
+    Button(
+        onClick = { savePainterProfile() },
+        modifier = Modifier.fillMaxWidth(),
+        enabled = !loading
+    ) {
+        Text(tr("Save Painter Profile", "पेंटर की जानकारी सेव करें"))
+    }
+
+    Divider()
+
+    Text(
+        tr("Your assigned jobs", "आपको दिए गए काम"),
+        style = MaterialTheme.typography.titleMedium
+    )
+
+    BookingList(bookings, hindi, true, ::updateBookingStatus)
 
             Divider()
 
