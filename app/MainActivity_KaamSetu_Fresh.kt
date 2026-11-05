@@ -515,7 +515,7 @@ fun KaamSetuApp() {
                         message = secondError.message
                             ?: e.message
                             ?: "Profile save failed"
-                    }loadBookings(user, "customer");
+                    )
 
 
             }
