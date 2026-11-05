@@ -93,7 +93,11 @@ fun KaamSetuApp() {
 
     var registering by remember {
         mutableStateOf(false)
-    } var showRegistrationSuccessDialog by remember {
+    } 
+
+var showRegistrationSuccessDialog by remember {
+    mutableStateOf(false)
+}
     mutableStateOf(false)
 }
 
@@ -736,7 +740,9 @@ fun KaamSetuApp() {
                 message,
                 color = MaterialTheme.colorScheme.primary
             )
-        } if (showRegistrationSuccessDialog) {
+        } }
+
+if (showRegistrationSuccessDialog) { {
     AlertDialog(
         onDismissRequest = {},
         title = {
