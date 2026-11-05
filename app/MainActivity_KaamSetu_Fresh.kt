@@ -416,8 +416,10 @@ fun KaamSetuApp() {
                         registering = false
                         password = ""
 
-                        auth.signOut()
-                        currentUser = null
+                        screen = "auth";
+
+
+                    
                     }
                     .addOnFailureListener { e ->
 
@@ -513,7 +515,9 @@ fun KaamSetuApp() {
                         message = secondError.message
                             ?: e.message
                             ?: "Profile save failed"
-                    }
+                    }loadBookings(user, "customer");
+
+
             }
     }
 
