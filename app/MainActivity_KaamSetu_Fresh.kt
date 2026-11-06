@@ -1,5 +1,7 @@
 package com.kaamsetu.app
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
@@ -32,7 +34,6 @@ private val db: FirebaseFirestore by lazy {
     FirebaseFirestore.getInstance()
 }
 
-
 private val districts = listOf(
     "Srinagar", "Jammu", "Anantnag", "Baramulla", "Budgam",
     "Kupwara", "Pulwama", "Shopian", "Ganderbal", "Bandipora",
@@ -48,7 +49,6 @@ private data class AppBooking(
     val address: String = "",
     val category: String = "",
     val details: String = "",
-    val photoUrls: List<String> = emptyList(),
     val status: String = "New",
     val assignedWorkerUid: String = "",
     val assignedWorkerEmail: String = "",
@@ -116,9 +116,37 @@ fun KaamSetuApp() {
         mutableStateOf("")
     }
 
-
     var loading by remember {
         mutableStateOf(false)
+    }
+
+    // Every network action gets a 30-second watchdog. If Firebase/network
+    // never responds, the UI is released instead of leaving buttons disabled.
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
+    var operationId by remember { mutableStateOf(0L) }
+
+    fun beginOperation(timeoutMessage: String): Long {
+        operationId += 1L
+        val id = operationId
+        loading = true
+        message = tr("Please wait...", "कृपया इंतज़ार करें...")
+        mainHandler.postDelayed({
+            if (operationId == id && loading) {
+                loading = false
+                operationId += 1L
+                message = timeoutMessage
+            }
+        }, 30_000L)
+        return id
+    }
+
+    fun isActiveOperation(id: Long): Boolean = operationId == id && loading
+
+    fun finishOperation(id: Long) {
+        if (operationId == id) {
+            loading = false
+            operationId += 1L
+        }
     }
 
     var bookings by remember {
@@ -152,546 +180,245 @@ fun KaamSetuApp() {
             }
     }
 
-    // Enter account after checking role and admin claim
-    fun enterAccount(user: FirebaseUser) {
-
-        loading = true
-
+    // Finish login only after token and Firestore profile checks complete.
+    fun enterAccount(user: FirebaseUser, id: Long, expectedRole: String) {
         user.getIdToken(true)
             .addOnSuccessListener { token ->
+                if (!isActiveOperation(id)) return@addOnSuccessListener
 
-                val isAdminClaim = token.claims["admin"] == true
-
-                db.collection("users")
-                    .document(user.uid)
-                    .get()
+                val hasAdminClaim = token.claims["admin"] == true
+                db.collection("users").document(user.uid).get()
                     .addOnSuccessListener { doc ->
+                        if (!isActiveOperation(id)) return@addOnSuccessListener
 
                         val savedRole = doc.getString("role") ?: ""
-
-                        val role = if (isAdminClaim) {
-                            "admin"
-                        } else {
-                            savedRole
-                        }
-
-                        if (role !in listOf("customer", "worker", "admin")) {
-
-                            loading = false
+                        val actualRole = if (hasAdminClaim) "admin" else savedRole
+                        if (actualRole !in listOf("customer", "worker", "admin") ||
+                            (expectedRole != "admin" && actualRole != expectedRole) ||
+                            (expectedRole == "admin" && actualRole != "admin")) {
                             auth.signOut()
                             currentUser = null
-
-                            message = tr(
-                                "This account has no valid role. Contact the administrator.",
-                                "इस अकाउंट की भूमिका सही नहीं है। एडमिन से संपर्क करें।"
-                            )
-
+                            finishOperation(id)
+                            message = if (expectedRole == "admin") {
+                                tr("This account does not have Admin permission.", "इस अकाउंट को एडमिन की अनुमति नहीं मिली है।")
+                            } else {
+                                tr("This account belongs to a different login type or has no profile.", "यह अकाउंट दूसरे लॉगिन प्रकार का है या इसकी प्रोफाइल नहीं मिली।")
+                            }
                             return@addOnSuccessListener
                         }
 
                         currentUser = user
-                        userRole = role
-
-                        userName = doc.getString("name")
-                            ?: doc.getString("fullName")
-                            ?: user.email.orEmpty()
-
+                        userRole = actualRole
+                        userName = doc.getString("name") ?: user.email.orEmpty()
                         fullName = userName
-
                         phone = doc.getString("phone") ?: ""
-                        district = doc.getString("district")
-                            ?: districts.first()
-
+                        district = doc.getString("district") ?: districts.first()
                         address = doc.getString("address") ?: ""
-
                         painterSkills = doc.getString("skills") ?: ""
-
-                        painterExperience =
-                            doc.getString("experience") ?: ""
-
+                        painterExperience = doc.getString("experience") ?: ""
                         screen = "dashboard"
-
-                        message = if (role == "admin") {
-                            tr(
-                                "Admin login successful",
-                                "एडमिन लॉगिन सफल"
-                            )
-                        } else {
-                            tr(
-                                "Login successful",
-                                "लॉगिन सफल"
-                            )
-                        }
-
-                        loadBookings(user, role)
-
-                        loading = false
+                        message = if (actualRole == "admin") tr("Admin login successful", "एडमिन लॉगिन सफल") else tr("Login successful", "लॉगिन सफल")
+                        finishOperation(id)
+                        loadBookings(user, actualRole)
                     }
                     .addOnFailureListener { e ->
-
-                        loading = false
-
-                        message = e.message ?: tr(
-                            "Profile could not be loaded",
-                            "प्रोफाइल लोड नहीं हुई"
-                        )
+                        if (!isActiveOperation(id)) return@addOnFailureListener
+                        auth.signOut()
+                        currentUser = null
+                        finishOperation(id)
+                        message = "${tr("Profile could not be loaded", "प्रोफाइल लोड नहीं हुई")}: ${e.message ?: "Unknown error"}"
                     }
             }
             .addOnFailureListener { e ->
-
-                loading = false
-
-                message = e.message ?: tr(
-                    "Login verification failed",
-                    "लॉगिन सत्यापन विफल"
-                )
+                if (!isActiveOperation(id)) return@addOnFailureListener
+                auth.signOut()
+                currentUser = null
+                finishOperation(id)
+                message = "${tr("Login verification failed", "लॉगिन सत्यापन विफल")}: ${e.message ?: "Unknown error"}"
             }
     }
 
     // Email and password login
     fun signIn(role: String) {
-
         val cleanEmail = email.trim().lowercase()
-
         if (cleanEmail.isBlank() || password.isBlank()) {
-
-            message = tr(
-                "Enter email and password",
-                "ईमेल और पासवर्ड भरें"
-            )
-
+            message = tr("Enter email and password", "ईमेल और पासवर्ड भरें")
             return
         }
 
-        loading = true
-
+        val id = beginOperation(tr("Login timed out. Check internet and try again.", "लॉगिन में समय अधिक लगा। इंटरनेट जाँचकर दोबारा कोशिश करें।"))
         auth.signInWithEmailAndPassword(cleanEmail, password)
             .addOnSuccessListener { result ->
-
+                if (!isActiveOperation(id)) return@addOnSuccessListener
                 val user = result.user
-
                 if (user == null) {
-
-                    loading = false
-                    message = tr("Login failed", "लॉगिन असफल")
-
-                } else if (role == "admin") {
-
-                    user.getIdToken(true)
-                        .addOnSuccessListener { token ->
-
-                            if (token.claims["admin"] == true) {
-                                enterAccount(user)
-                            } else {
-                                auth.signOut()
-                                currentUser = null
-                                loading = false
-
-                                message = tr(
-                                    "This account does not have Admin permission.",
-                                    "इस अकाउंट को एडमिन की अनुमति नहीं मिली है।"
-                                )
-                            }
-                        }
-                        .addOnFailureListener { e ->
-                            loading = false
-                            message = e.message ?: "Admin verification failed"
-                        }
-
+                    finishOperation(id)
+                    message = tr("Login failed: user account was not returned.", "लॉगिन असफल: अकाउंट की जानकारी नहीं मिली।")
                 } else {
-
-                    db.collection("users")
-                        .document(user.uid)
-                        .get()
-                        .addOnSuccessListener { doc ->
-
-                            val savedRole = doc.getString("role") ?: ""
-
-                            if (savedRole != role) {
-
-                                auth.signOut()
-                                currentUser = null
-                                loading = false
-
-                                message = tr(
-                                    "This account belongs to a different login type.",
-                                    "यह अकाउंट दूसरे लॉगिन प्रकार का है।"
-                                )
-
-                            } else {
-                                enterAccount(user)
-                            }
-                        }
-                        .addOnFailureListener { e ->
-
-                            loading = false
-                            message = e.message ?: "Profile error"
-                        }
+                    enterAccount(user, id, role)
                 }
             }
             .addOnFailureListener { e ->
-
-                loading = false
-
-                message = e.message ?: tr(
-                    "Login failed",
-                    "लॉगिन असफल"
-                )
+                if (!isActiveOperation(id)) return@addOnFailureListener
+                finishOperation(id)
+                message = "${tr("Login failed", "लॉगिन असफल")}: ${e.message ?: "Unknown error"}"
             }
     }
 
     // Customer and painter registration
     fun register() {
-
         val cleanEmail = email.trim().lowercase()
-
-        if (
-            fullName.isBlank() ||
-            phone.isBlank() ||
-            cleanEmail.isBlank() ||
-            password.length < 6 ||
-            address.isBlank()
-        ) {
-
-            message = tr(
-                "Fill name, phone, email, password (at least 6 characters), and address.",
-                "नाम, मोबाइल, ईमेल, कम से कम 6 अक्षर का पासवर्ड और पता भरें।"
-            )
-
+        if (fullName.isBlank() || phone.isBlank() || cleanEmail.isBlank() || password.length < 6 || address.isBlank()) {
+            message = tr("Fill name, phone, email, password (at least 6 characters), and address.", "नाम, मोबाइल, ईमेल, कम से कम 6 अक्षर का पासवर्ड और पता भरें।")
+            return
+        }
+        if (selectedRole == "worker" && (painterSkills.isBlank() || painterExperience.isBlank())) {
+            message = tr("Enter your work skills and experience.", "अपने काम की जानकारी और अनुभव भरें।")
             return
         }
 
-        if (selectedRole == "worker" &&
-            (painterSkills.isBlank() || painterExperience.isBlank())
-        ) {
-
-            message = tr(
-                "Enter your work skills and experience.",
-                "अपने काम की जानकारी और अनुभव भरें।"
-            )
-
-            return
-        }
-
-        loading = true
-
+        val id = beginOperation(tr("Registration timed out. Check internet and try again.", "रजिस्ट्रेशन में समय अधिक लगा। इंटरनेट जाँचकर दोबारा कोशिश करें।"))
         auth.createUserWithEmailAndPassword(cleanEmail, password)
             .addOnSuccessListener { result ->
-
+                if (!isActiveOperation(id)) return@addOnSuccessListener
                 val user = result.user
-
                 if (user == null) {
-
-                    loading = false
-                    message = tr(
-                        "Registration failed",
-                        "रजिस्ट्रेशन असफल"
-                    )
-
+                    finishOperation(id)
+                    message = tr("Registration failed: account was not returned.", "रजिस्ट्रेशन असफल: अकाउंट की जानकारी नहीं मिली।")
                     return@addOnSuccessListener
                 }
 
                 val profile = hashMapOf(
-                    "uid" to user.uid,
-                    "name" to fullName.trim(),
-                    "fullName" to fullName.trim(),
-                    "phone" to phone.trim(),
-                    "email" to cleanEmail,
-                    "district" to district,
-                    "address" to address.trim(),
-                    "role" to selectedRole,
-                    "skills" to painterSkills.trim(),
-                    "experience" to painterExperience.trim(),
-                    "createdAt" to System.currentTimeMillis()
+                    "uid" to user.uid, "name" to fullName.trim(), "phone" to phone.trim(),
+                    "email" to cleanEmail, "district" to district, "address" to address.trim(),
+                    "role" to selectedRole, "skills" to painterSkills.trim(),
+                    "experience" to painterExperience.trim(), "createdAt" to System.currentTimeMillis()
                 )
-
-                db.collection("users")
-                    .document(user.uid)
-                    .set(profile)
+                db.collection("users").document(user.uid).set(profile)
                     .addOnSuccessListener {
-
-                        loading = false
-
-                        message = tr(
-                            "Successfully Submitted! Please log in.",
-                            "सफलतापूर्वक जमा हुआ! अब लॉगिन करें।"
-                        )
-
-                        registering = false
-                        password = ""
-
+                        if (!isActiveOperation(id)) return@addOnSuccessListener
                         auth.signOut()
                         currentUser = null
+                        registering = false
+                        password = ""
+                        finishOperation(id)
+                        message = tr("Successfully Submitted! Please log in.", "सफलतापूर्वक जमा हुआ! अब लॉगिन करें।")
                     }
                     .addOnFailureListener { e ->
-
-                        loading = false
-
-                        message = "${tr("Profile save failed", "प्रोफाइल सेव नहीं हुई")}: ${e.message}"
+                        if (!isActiveOperation(id)) return@addOnFailureListener
+                        auth.signOut()
+                        currentUser = null
+                        finishOperation(id)
+                        message = "${tr("Profile save failed", "प्रोफाइल सेव नहीं हुई")}: ${e.message ?: "Unknown error"}. ${tr("The email account may already exist; check Firebase Authentication.", "ईमेल अकाउंट बन चुका हो सकता है; Firebase Authentication जाँचें।")}"
                     }
             }
             .addOnFailureListener { e ->
-
-                loading = false
-
-                message = e.message ?: tr(
-                    "Registration failed",
-                    "रजिस्ट्रेशन असफल"
-                )
+                if (!isActiveOperation(id)) return@addOnFailureListener
+                finishOperation(id)
+                message = "${tr("Registration failed", "रजिस्ट्रेशन असफल")}: ${e.message ?: "Unknown error"}"
             }
     }
 
     // Save or update painter profile from painter dashboard
     fun savePainterProfile() {
-
         val user = currentUser
-
-        if (user == null) {
-            message = tr("Please log in again.", "कृपया दोबारा लॉगिन करें।")
-            return
+        if (user == null) { message = tr("Please log in again.", "कृपया दोबारा लॉगिन करें।"); return }
+        if (fullName.isBlank() || phone.isBlank() || address.isBlank() || painterSkills.isBlank() || painterExperience.isBlank()) {
+            message = tr("Fill all painter profile details.", "पेंटर की सभी जानकारी भरें।"); return
         }
-
-        if (
-            fullName.isBlank() ||
-            phone.isBlank() ||
-            address.isBlank() ||
-            painterSkills.isBlank() ||
-            painterExperience.isBlank()
-        ) {
-
-            message = tr(
-                "Fill all painter profile details.",
-                "पेंटर की सभी जानकारी भरें।"
-            )
-
-            return
-        }
-
-        loading = true
-
+        val id = beginOperation(tr("Profile save timed out. Check internet and try again.", "प्रोफाइल सेव होने में समय अधिक लगा। इंटरनेट जाँचकर दोबारा कोशिश करें।"))
         val updates = hashMapOf<String, Any>(
-            "uid" to user.uid,
-            "name" to fullName.trim(),
-            "fullName" to fullName.trim(),
-            "phone" to phone.trim(),
-            "email" to (user.email ?: ""),
-            "district" to district,
-            "address" to address.trim(),
-            "role" to "worker",
-            "skills" to painterSkills.trim(),
-            "experience" to painterExperience.trim()
+            "uid" to user.uid, "name" to fullName.trim(), "phone" to phone.trim(),
+            "email" to (user.email ?: ""), "district" to district, "address" to address.trim(),
+            "role" to "worker", "skills" to painterSkills.trim(), "experience" to painterExperience.trim()
         )
-
-        db.collection("users")
-            .document(user.uid)
-            .update(updates)
+        val profileRef = db.collection("users").document(user.uid)
+        profileRef.set(updates, com.google.firebase.firestore.SetOptions.merge())
             .addOnSuccessListener {
-
-                loading = false
+                if (!isActiveOperation(id)) return@addOnSuccessListener
                 userName = fullName.trim()
-
-                message = tr(
-                    "Painter profile saved successfully!",
-                    "पेंटर की जानकारी सफलतापूर्वक सेव हुई!"
-                )
+                finishOperation(id)
+                message = tr("Painter profile saved successfully!", "पेंटर की जानकारी सफलतापूर्वक सेव हुई!")
             }
             .addOnFailureListener { e ->
-
-                // If profile document does not exist, create it.
-                db.collection("users")
-                    .document(user.uid)
-                    .set(updates)
-                    .addOnSuccessListener {
-
-                        loading = false
-                        userName = fullName.trim()
-
-                        message = tr(
-                            "Painter profile saved successfully!",
-                            "पेंटर की जानकारी सफलतापूर्वक सेव हुई!"
-                        )
-                    }
-                    .addOnFailureListener { secondError ->
-
-                        loading = false
-
-                        message = secondError.message
-                            ?: e.message
-                            ?: "Profile save failed"
-                    }
+                if (!isActiveOperation(id)) return@addOnFailureListener
+                finishOperation(id)
+                message = "${tr("Profile save failed", "प्रोफाइल सेव नहीं हुई")}: ${e.message ?: "Unknown error"}"
             }
     }
 
-    // Customer booking (email/password account; no photo upload required)
+    // Customer creates a booking
     fun createBooking() {
-
-        val user = currentUser ?: return
-
-        if (
-            fullName.isBlank() ||
-            phone.isBlank() ||
-            address.isBlank() ||
-            details.isBlank()
-        ) {
-            message = tr(
-                "Enter customer name, phone, complete address, and work details.",
-                "ग्राहक का नाम, मोबाइल, पूरा पता और काम की जानकारी भरें।"
-            )
-            return
+        val user = currentUser
+        if (user == null) { message = tr("Please log in again.", "कृपया दोबारा लॉगिन करें।"); return }
+        if (fullName.isBlank() || phone.isBlank() || address.isBlank() || details.isBlank()) {
+            message = tr("Enter customer name, phone, complete address, and work details.", "ग्राहक का नाम, मोबाइल, पूरा पता और काम की जानकारी भरें।"); return
         }
-
-        if (phone.trim().length < 10) {
-            message = tr(
-                "Enter a valid mobile number.",
-                "सही मोबाइल नंबर भरें।"
-            )
-            return
-        }
-
-        loading = true
-
-        val booking = AppBooking(
-            ownerUid = user.uid,
-            customerName = fullName.trim(),
-            phone = phone.trim(),
-            district = district,
-            address = address.trim(),
-            category = category,
-            details = details.trim(),
-            photoUrls = emptyList(),
-            status = "New"
-        )
-
-        db.collection("bookings")
-            .add(booking)
+        val id = beginOperation(tr("Booking timed out. Check internet before retrying.", "बुकिंग में समय अधिक लगा। दोबारा भेजने से पहले इंटरनेट जाँचें।"))
+        val booking = AppBooking(ownerUid=user.uid, customerName=fullName.trim(), phone=phone.trim(), district=district, address=address.trim(), category=category, details=details.trim(), status="New")
+        db.collection("bookings").add(booking)
             .addOnSuccessListener {
-                loading = false
-                message = tr(
-                    "Successfully Submitted!",
-                    "बुकिंग सफलतापूर्वक जमा हुई!"
-                )
+                if (!isActiveOperation(id)) return@addOnSuccessListener
                 details = ""
+                finishOperation(id)
+                message = tr("Booking submitted successfully!", "बुकिंग सफलतापूर्वक जमा हुई!")
                 loadBookings(user, "customer")
             }
             .addOnFailureListener { e ->
-                loading = false
-                message = e.message ?: tr(
-                    "Booking failed",
-                    "बुकिंग जमा नहीं हुई"
-                )
+                if (!isActiveOperation(id)) return@addOnFailureListener
+                finishOperation(id)
+                message = "${tr("Booking failed", "बुकिंग नहीं हुई")}: ${e.message ?: "Unknown error"}"
             }
     }
 
     // Admin assigns a painter to a booking
     fun assignWorker(row: BookingRow) {
-
         val targetEmail = workerEmail.trim().lowercase()
-
-        if (targetEmail.isBlank()) {
-
-            message = tr(
-                "Enter painter's registered email.",
-                "पेंटर का रजिस्टर्ड ईमेल भरें।"
-            )
-
-            return
-        }
-
-        loading = true
-
-        db.collection("users")
-            .whereEqualTo("email", targetEmail)
-            .whereEqualTo("role", "worker")
-            .limit(1)
-            .get()
+        if (targetEmail.isBlank()) { message = tr("Enter painter's registered email.", "पेंटर का रजिस्टर्ड ईमेल भरें।"); return }
+        val id = beginOperation(tr("Painter assignment timed out. Try again.", "पेंटर असाइन करने में समय अधिक लगा। दोबारा कोशिश करें।"))
+        db.collection("users").whereEqualTo("email", targetEmail).whereEqualTo("role", "worker").limit(1).get()
             .addOnSuccessListener { result ->
-
+                if (!isActiveOperation(id)) return@addOnSuccessListener
                 val worker = result.documents.firstOrNull()
-
                 if (worker == null) {
-
-                    loading = false
-
-                    message = tr(
-                        "Painter account not found.",
-                        "पेंटर का अकाउंट नहीं मिला।"
-                    )
-
-                } else {
-
-                    val uid = worker.getString("uid") ?: worker.id
-
-                    db.collection("bookings")
-                        .document(row.id)
-                        .update(
-                            mapOf(
-                                "assignedWorkerUid" to uid,
-                                "assignedWorkerEmail" to targetEmail,
-                                "status" to "Assigned"
-                            )
-                        )
-                        .addOnSuccessListener {
-
-                            loading = false
-
-                            message = tr(
-                                "Painter assigned successfully.",
-                                "पेंटर सफलतापूर्वक असाइन हुआ।"
-                            )
-
-                            currentUser?.let {
-                                loadBookings(it, "admin")
-                            }
-                        }
-                        .addOnFailureListener { e ->
-
-                            loading = false
-                            message = e.message ?: "Assignment failed"
-                        }
+                    finishOperation(id)
+                    message = tr("Painter account not found.", "पेंटर का अकाउंट नहीं मिला।")
+                    return@addOnSuccessListener
                 }
+                val uid = worker.getString("uid") ?: worker.id
+                db.collection("bookings").document(row.id).update(mapOf("assignedWorkerUid" to uid, "assignedWorkerEmail" to targetEmail, "status" to "Assigned"))
+                    .addOnSuccessListener {
+                        if (!isActiveOperation(id)) return@addOnSuccessListener
+                        finishOperation(id)
+                        message = tr("Painter assigned successfully.", "पेंटर सफलतापूर्वक असाइन हुआ।")
+                        currentUser?.let { loadBookings(it, "admin") }
+                    }
+                    .addOnFailureListener { e ->
+                        if (!isActiveOperation(id)) return@addOnFailureListener
+                        finishOperation(id); message = e.message ?: "Assignment failed"
+                    }
             }
             .addOnFailureListener { e ->
-
-                loading = false
-                message = e.message ?: "Painter search failed"
+                if (!isActiveOperation(id)) return@addOnFailureListener
+                finishOperation(id); message = e.message ?: "Painter search failed"
             }
     }
 
     // Painter accepts, rejects or completes assigned work
     fun updateBookingStatus(row: BookingRow, newStatus: String) {
-
-        val user = currentUser ?: return
-
-        loading = true
-
-        val updates: Map<String, Any> = if (newStatus == "Rejected") {
-            mapOf(
-                "status" to "Reassignment Requested",
-                "assignedWorkerUid" to "",
-                "assignedWorkerEmail" to ""
-            )
-        } else {
-            mapOf("status" to newStatus)
-        }
-
-        db.collection("bookings")
-            .document(row.id)
-            .update(updates)
+        val user = currentUser
+        if (user == null) { message = tr("Please log in again.", "कृपया दोबारा लॉगिन करें।"); return }
+        val id = beginOperation(tr("Status update timed out. Try again.", "स्थिति अपडेट होने में समय अधिक लगा। दोबारा कोशिश करें।"))
+        db.collection("bookings").document(row.id).update("status", newStatus)
             .addOnSuccessListener {
-
-                loading = false
-
-                message = tr(
-                    "Booking status updated.",
-                    "बुकिंग की स्थिति अपडेट हुई।"
-                )
-
+                if (!isActiveOperation(id)) return@addOnSuccessListener
+                finishOperation(id)
+                message = tr("Booking status updated.", "बुकिंग की स्थिति अपडेट हुई।")
                 loadBookings(user, userRole)
             }
             .addOnFailureListener { e ->
-
-                loading = false
-                message = e.message ?: "Update failed"
+                if (!isActiveOperation(id)) return@addOnFailureListener
+                finishOperation(id); message = e.message ?: "Update failed"
             }
     }
 
@@ -871,12 +598,7 @@ fun KaamSetuApp() {
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !loading
                 ) {
-                    Text(
-                        tr(
-                            "Submit Registration",
-                            "रजिस्ट्रेशन जमा करें"
-                        )
-                    )
+                    Text(if (loading) tr("Submitting...", "जमा हो रहा है...") else tr("Submit Registration", "रजिस्ट्रेशन जमा करें"))
                 }
 
                 TextButton(
@@ -897,7 +619,7 @@ fun KaamSetuApp() {
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !loading
                 ) {
-                    Text(tr("Login", "लॉगिन"))
+                    Text(if (loading) tr("Please wait...", "कृपया इंतज़ार करें...") else tr("Login", "लॉगिन"))
                 }
 
                 OutlinedButton(
@@ -1085,12 +807,7 @@ fun KaamSetuApp() {
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !loading
                 ) {
-                    Text(
-                        tr(
-                            "Submit Booking",
-                            "बुकिंग जमा करें"
-                        )
-                    )
+                    Text(if (loading) tr("Submitting...", "जमा हो रहा है...") else tr("Submit Booking", "बुकिंग जमा करें"))
                 }
 
                 Text(
@@ -1183,12 +900,7 @@ fun KaamSetuApp() {
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !loading
                 ) {
-                    Text(
-                        tr(
-                            "Save Painter Profile",
-                            "पेंटर की जानकारी सेव करें"
-                        )
-                    )
+                    Text(if (loading) tr("Saving...", "सेव हो रहा है...") else tr("Save Painter Profile", "पेंटर की जानकारी सेव करें"))
                 }
 
                 Divider()
