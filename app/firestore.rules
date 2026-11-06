@@ -1,18 +1,56 @@
+
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() { return request.auth != null; }
-    function isAdmin() { return signedIn() && request.auth.token.admin == true; }
-    match /records/{recordId} {
-      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
-      allow read: if isAdmin() || (signedIn() && (
-        resource.data.ownerUid == request.auth.uid ||
-        resource.data.assignedWorkerPhoneE164 == request.auth.token.phone_number
-      ));
-      allow update: if isAdmin() || (signedIn() &&
-        resource.data.assignedWorkerPhoneE164 == request.auth.token.phone_number &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']));
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn() && request.auth.token.admin == true;
+    }
+
+    // Customer and painter profiles
+    match /users/{userId} {
+
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.uid == request.auth.uid;
+
+      allow read: if signedIn()
+        && (request.auth.uid == userId || isAdmin());
+
+      allow update: if signedIn()
+        && (request.auth.uid == userId || isAdmin());
+
+      allow delete: if isAdmin();
+    }
+
+    // Customer bookings
+    match /bookings/{bookingId} {
+
+      allow create: if signedIn()
+        && request.resource.data.ownerUid == request.auth.uid;
+
+      allow read: if signedIn()
+        && (
+          resource.data.ownerUid == request.auth.uid
+          || resource.data.assignedWorkerUid == request.auth.uid
+          || isAdmin()
+        );
+
+      allow update: if isAdmin()
+        || (
+          signedIn()
+          && resource.data.assignedWorkerUid == request.auth.uid
+          && request.resource.data.diff(resource.data)
+            .affectedKeys().hasOnly(['status'])
+        );
+
       allow delete: if isAdmin();
     }
   }
 }
+
