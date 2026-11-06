@@ -4,53 +4,125 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Check whether the user is logged in
     function signedIn() {
       return request.auth != null;
     }
 
+    // Only Firebase Admin custom claim can grant admin access
     function isAdmin() {
-      return signedIn() && request.auth.token.admin == true;
+      return signedIn()
+        && request.auth.token.admin == true;
     }
 
-    // Customer and painter profiles
+    // Check whether the painter is approved
+    function isApprovedPainter(uid) {
+      return exists(
+        /databases/$(database)/documents/users/$(uid)
+      )
+      && get(
+        /databases/$(database)/documents/users/$(uid)
+      ).data.role == 'worker'
+      && get(
+        /databases/$(database)/documents/users/$(uid)
+      ).data.applicationStatus == 'Approved';
+    }
+
+    // USER PROFILES AND PAINTER APPLICATIONS
     match /users/{userId} {
 
+      // A user can create only their own customer or painter profile.
+      // A new painter application must be Pending.
       allow create: if signedIn()
         && request.auth.uid == userId
-        && request.resource.data.uid == request.auth.uid;
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.role in ['customer', 'worker']
+        && (
+          request.resource.data.role == 'customer'
+          || (
+            !('applicationStatus' in request.resource.data)
+            || request.resource.data.applicationStatus == 'Pending'
+          )
+        );
 
-      allow read: if signedIn()
-        && (request.auth.uid == userId || isAdmin());
-
-      allow update: if signedIn()
-        && (request.auth.uid == userId || isAdmin());
-
-      allow delete: if isAdmin();
-    }
-
-    // Customer bookings
-    match /bookings/{bookingId} {
-
-      allow create: if signedIn()
-        && request.resource.data.ownerUid == request.auth.uid;
-
+      // User can read own profile; Admin can read all profiles.
       allow read: if signedIn()
         && (
-          resource.data.ownerUid == request.auth.uid
-          || resource.data.assignedWorkerUid == request.auth.uid
+          request.auth.uid == userId
           || isAdmin()
         );
 
+      // Admin can update profiles, including painter approval status.
+      // A normal user can update permitted profile details only.
+      allow update: if isAdmin()
+        || (
+          signedIn()
+          && request.auth.uid == userId
+          && request.resource.data.uid == resource.data.uid
+          && request.resource.data.role == resource.data.role
+          && (
+            !('applicationStatus' in resource.data)
+            || request.resource.data.applicationStatus
+              == resource.data.applicationStatus
+          )
+          && request.resource.data.diff(resource.data)
+            .affectedKeys()
+            .hasOnly([
+              'name',
+              'fullName',
+              'phone',
+              'email',
+              'district',
+              'address',
+              'skills',
+              'experience',
+              'painterSkills',
+              'painterExperience',
+              'updatedAt'
+            ])
+        );
+
+      // Only Admin can delete a profile.
+      allow delete: if isAdmin();
+    }
+
+    // CUSTOMER BOOKINGS
+    match /bookings/{bookingId} {
+
+      // A logged-in customer can create a booking for themselves.
+      allow create: if signedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.status == 'New';
+
+      // Customer sees own bookings.
+      // Approved assigned painter sees their assigned bookings.
+      // Admin can see all bookings.
+      allow read: if signedIn()
+        && (
+          resource.data.ownerUid == request.auth.uid
+          || (
+            resource.data.assignedWorkerUid == request.auth.uid
+            && isApprovedPainter(request.auth.uid)
+          )
+          || isAdmin()
+        );
+
+      // Admin can manage bookings.
+      // An approved assigned painter can only mark work Completed.
       allow update: if isAdmin()
         || (
           signedIn()
           && resource.data.assignedWorkerUid == request.auth.uid
+          && isApprovedPainter(request.auth.uid)
+          && resource.data.status == 'Assigned'
+          && request.resource.data.status == 'Completed'
           && request.resource.data.diff(resource.data)
-            .affectedKeys().hasOnly(['status'])
+            .affectedKeys()
+            .hasOnly(['status'])
         );
 
+      // Only Admin can delete bookings.
       allow delete: if isAdmin();
     }
   }
 }
-
